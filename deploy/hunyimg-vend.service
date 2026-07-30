@@ -1,0 +1,20 @@
+[Unit]
+Description=hunydev image vending service
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=exedev
+Group=exedev
+SupplementaryGroups=docker
+ExecStart=/opt/hunyimg/vend -addr 127.0.0.1:8000 -config /etc/hunyimg/config.json -state /var/lib/hunyimg/grants.json
+Restart=always
+RestartSec=2
+Environment=HOME=/home/exedev
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hunyimg-vend
+
+[Install]
+WantedBy=multi-user.target

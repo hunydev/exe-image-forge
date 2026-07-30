@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# hunyimg - build & vend custom exe.dev-compatible images with pre-authenticated AI CLIs.
+set -euo pipefail
+
+ROOT=/home/exedev/hunyimg
+AUTHHOME=/var/lib/hunyimg/authhome
+BASE=hunydev/base:latest
+DEV=hunydev/dev:latest
+CFG=/etc/hunyimg/config.json
+
+log(){ printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+die(){ printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+ensure_authhome(){
+  if [ ! -d "$AUTHHOME" ]; then
+    log "creating auth home $AUTHHOME"
+    sudo mkdir -p "$AUTHHOME"
+    sudo chown 1000:1000 "$AUTHHOME"
+    docker run --rm -v "$AUTHHOME":/mnt "$BASE" \
+      bash -c 'cp -a /home/exedev/. /mnt/ 2>/dev/null || true; chown -R 1000:1000 /mnt'
+  fi
+}
+
+cmd_build(){
+  log "building $BASE"
+  docker build --pull -t "$BASE" -f "$ROOT/image/Dockerfile" "$ROOT/image"
+  docker run --rm "$BASE" bash -lc 'node -v; npm -v; python3 -V; go version; uv --version; gh --version|head -1; codex --version; claude --version; gemini --version'
+  log "done. next: hunyimg auth <tool>, then hunyimg bake"
+}
+
+cmd_shell(){
+  ensure_authhome
+  log "interactive shell in $BASE with persistent HOME ($AUTHHOME)"
+  log "host network is shared, so OAuth callbacks on localhost work via 'ssh -L <port>:localhost:<port> hunydev-images.exe.xyz'"
+  docker run --rm -it --network host -e HOME=/home/exedev -u 1000:1000 \
+    -v "$AUTHHOME":/home/exedev -w /home/exedev "$BASE" bash -l
+}
+
+cmd_auth(){
+  ensure_authhome
+  local tool=${1:-}; shift || true
+  local run=(docker run --rm -it --network host -e HOME=/home/exedev -u 1000:1000
+             -v "$AUTHHOME":/home/exedev -w /home/exedev "$BASE")
+  case "$tool" in
+    gh)     "${run[@]}" gh auth login --git-protocol https "$@" ;;
+    codex)  echo "callback: ssh -L 1455:localhost:1455 hunydev-images.exe.xyz"; "${run[@]}" codex login "$@" ;;
+    claude) "${run[@]}" claude "$@" ;;
+    claude-token) "${run[@]}" claude setup-token ;;
+    gemini) echo "callback port varies; use 'ssh -R'/'-L' or GEMINI_API_KEY"; "${run[@]}" gemini "$@" ;;
+    all)    for t in gh codex claude gemini; do cmd_auth "$t"; done ;;
+    *) die "usage: hunyimg auth {gh|codex|claude|claude-token|gemini|all}" ;;
+  esac
+}
+
+cmd_status(){
+  ensure_authhome
+  echo "auth home: $AUTHHOME"
+  for f in .config/gh/hosts.yml .codex/auth.json .claude/.credentials.json .claude.json \
+           .gemini/oauth_creds.json .gemini/google_accounts.json; do
+    if sudo test -s "$AUTHHOME/$f"; then printf '  \033[32m✓\033[0m %s\n' "$f"; else printf '  \033[31m✗\033[0m %s\n' "$f"; fi
+  done
+  echo
+  docker run --rm --network host -e HOME=/home/exedev -u 1000:1000 -v "$AUTHHOME":/home/exedev "$BASE" \
+    bash -lc 'echo "-- gh:"; gh auth status 2>&1|sed "s/^/   /"; echo "-- codex:"; codex login status 2>&1|sed "s/^/   /"' || true
+}
+
+cmd_bake(){
+  ensure_authhome
+  log "baking $DEV = $BASE + credentials"
+  CTX=$(mktemp -d)
+  trap 'sudo rm -rf "${CTX:-/nonexistent}"' EXIT
+  sudo tar -C "$AUTHHOME" -cf "$CTX/home.tar" \
+    --exclude=.cache --exclude=.npm --exclude=.local/share/claude \
+    --exclude='*.log' --exclude=.bash_history . 2>/dev/null || true
+  sudo chown "$(id -u):$(id -g)" "$CTX/home.tar"
+  cat > "$CTX/Dockerfile" <<EOF
+FROM $BASE
+ADD --chown=1000:1000 home.tar /home/exedev/
+LABEL "dev.huny.image"="dev"
+LABEL "dev.huny.baked"="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+EOF
+  docker build --provenance=false --sbom=false -t "$DEV" "$CTX"
+  log "built $DEV"
+  log "now vend repo 'hunydev/dev' from the web UI"
+}
+
+cmd_verify(){
+  local img=${1:-$DEV}
+  log "verifying $img"
+  docker run --rm -u 1000:1000 -e HOME=/home/exedev "$img" bash -lc '
+    set +e
+    echo "-- versions"; node -v; python3 -V; go version|cut -d" " -f3; uv --version; gh --version|head -1
+    codex --version; claude --version; gemini --version
+    echo "-- auth"; gh auth status 2>&1|head -5; codex login status 2>&1|head -3
+    ls -la ~/.claude/.credentials.json ~/.gemini/oauth_creds.json 2>&1'
+}
+
+cmd_import(){
+  ensure_authhome
+  # Import credentials produced on another machine (your laptop, where the
+  # OAuth browser flow is easy). Accepts a tar stream on stdin or file paths.
+  local src=${1:--}
+  if [ "$src" = "-" ]; then
+    log "reading credential tar from stdin into $AUTHHOME"
+    sudo tar -C "$AUTHHOME" -xf - "$@" 2>/dev/null || sudo tar -C "$AUTHHOME" -xf -
+  else
+    log "extracting $src into $AUTHHOME"
+    sudo tar -C "$AUTHHOME" -xf "$src"
+  fi
+  sudo chown -R 1000:1000 "$AUTHHOME"
+  cmd_status
+}
+
+cmd_export_hint(){
+  cat <<'EOF'
+Run this on the machine where you are already logged in, then pipe it here:
+
+  tar -C "$HOME" -cf - \
+      .config/gh/hosts.yml \
+      .codex/auth.json \
+      .claude/.credentials.json .claude.json \
+      .gemini/oauth_creds.json .gemini/google_accounts.json 2>/dev/null \
+    | ssh hunydev-images.exe.xyz hunyimg import -
+
+Omit any file you do not have. Then: hunyimg bake
+EOF
+}
+
+cmd_token(){
+  # exe.dev's HTTPS proxy is auth-gated, so a laptop 'docker pull' needs a VM
+  # bearer token (used as the basic-auth password). Store it so the web UI can
+  # print a ready-to-paste docker login line.
+  local t=${1:-}
+  if [ -z "$t" ]; then
+    cat <<'EOF'
+Create a VM token on your laptop:
+
+  ssh exe.dev ssh-key generate-api-key --vm=hunydev-images --label=registry
+
+Then store it here:
+
+  hunyimg token <TOKEN>       # or: hunyimg token clear
+EOF
+    return
+  fi
+  [ "$t" = clear ] && t=""
+  python3 - "$t" <<'PY'
+import json, sys
+p='/etc/hunyimg/config.json'
+c=json.load(open(p)); c['vm_token']=sys.argv[1]
+json.dump(c, open(p,'w'), indent=2)
+PY
+  sudo systemctl restart hunyimg-vend
+  log "vm token ${t:+stored}${t:-cleared}"
+}
+
+cmd_password(){
+  read -rsp "new password: " p1; echo
+  read -rsp "again: " p2; echo
+  [ "$p1" = "$p2" ] || die "mismatch"
+  echo "$p1" | sudo /opt/hunyimg/vend -set-password -config "$CFG"
+  sudo chown exedev:exedev "$CFG"
+  sudo systemctl restart hunyimg-vend
+  log "password updated, service restarted"
+}
+
+cmd_vend_build(){
+  log "rebuilding vend service"
+  (cd "$ROOT/vend" && go build -o /tmp/vend .)
+  sudo install -m0755 /tmp/vend /opt/hunyimg/vend
+  sudo cp "$ROOT/deploy/hunyimg-vend.service" /etc/systemd/system/
+  sudo systemctl daemon-reload && sudo systemctl restart hunyimg-vend
+  sleep 1; systemctl is-active hunyimg-vend
+}
+
+cmd_grants(){ curl -s localhost:8000/api/info | jq .; }
+
+cmd_gc(){
+  log "pruning dangling images and registry garbage"
+  docker image prune -f
+  docker exec registry sh -c 'registry garbage-collect --delete-untagged /etc/docker/registry/config.yml' >/dev/null 2>&1 \
+    && docker restart registry >/dev/null \
+    || echo "(registry gc failed; skipping)"
+  sudo du -sh /var/lib/hunyimg/registry
+  df -h / | tail -1
+}
+
+case "${1:-help}" in
+  build) shift; cmd_build "$@" ;;
+  shell) shift; cmd_shell "$@" ;;
+  auth) shift; cmd_auth "$@" ;;
+  status) shift; cmd_status "$@" ;;
+  bake) shift; cmd_bake "$@" ;;
+  verify) shift; cmd_verify "$@" ;;
+  password) shift; cmd_password "$@" ;;
+  token) shift; cmd_token "$@" ;;
+  import) shift; cmd_import "$@" ;;
+  export-hint) shift; cmd_export_hint "$@" ;;
+  vend-build) shift; cmd_vend_build "$@" ;;
+  grants) shift; cmd_grants "$@" ;;
+  gc) shift; cmd_gc "$@" ;;
+  *) cat <<'EOF'
+hunyimg - custom exe.dev image builder + time-limited image vending
+
+  hunyimg build          rebuild the base image (hunydev/base:latest)
+  hunyimg auth <tool>    log in inside the image: gh | codex | claude | claude-token | gemini | all
+  hunyimg import [file]  import credentials from a tar (stdin by default)
+  hunyimg export-hint    print the command to run on your logged-in machine
+  hunyimg shell          interactive shell in the image with the persistent auth HOME
+  hunyimg status         show which credentials are present
+  hunyimg bake           build hunydev/dev:latest = base + baked credentials
+  hunyimg verify [img]   sanity-check an image (tools + auth)
+  hunyimg password       change the web password
+  hunyimg token [tok]    store an exe.dev VM token for laptop 'docker pull'
+  hunyimg vend-build     rebuild/restart the vending service
+  hunyimg grants         list active grants
+  hunyimg gc             prune docker/registry garbage
+EOF
+  ;;
+esac

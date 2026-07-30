@@ -1,0 +1,13 @@
+[Unit]
+Description=hunydev image registry garbage collection
+After=docker.service
+
+[Service]
+Type=oneshot
+User=exedev
+Group=exedev
+SupplementaryGroups=docker
+ExecStart=/usr/local/bin/hunyimg gc
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hunyimg-gc

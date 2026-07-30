@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>huny images</title>
+<style>
+:root{color-scheme:dark;--bg:#0d1117;--fg:#e6edf3;--mut:#8b949e;--card:#161b22;--line:#30363d;--acc:#2f81f7;--ok:#3fb950}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans KR",sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+.wrap{width:100%;max-width:760px}
+h1{font-size:22px;margin:0 0 4px}
+p.sub{color:var(--mut);margin:0 0 20px;font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px}
+label{display:block;font-size:12px;color:var(--mut);margin:0 0 6px;text-transform:uppercase;letter-spacing:.04em}
+input,select{width:100%;background:#0d1117;border:1px solid var(--line);border-radius:8px;color:var(--fg);padding:10px 12px;font:inherit}
+input:focus,select:focus{outline:none;border-color:var(--acc)}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.row>div{flex:1;min-width:150px}
+button{margin-top:16px;width:100%;background:var(--acc);border:0;border-radius:8px;color:#fff;font:600 15px/1 inherit;padding:12px;cursor:pointer}
+button:disabled{opacity:.6;cursor:default}
+pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0}
+.f{margin-bottom:14px}
+.f .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.cp{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer;width:auto;margin:0}
+.cp:hover{color:var(--fg);border-color:var(--acc)}
+.err{color:#f85149;font-size:13px;margin-top:12px}
+.exp{color:var(--ok);font-size:13px;font-weight:600}
+.hide{display:none}
+kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>huny images</h1>
+  <p class="sub">비밀번호를 입력하면 지정 시간 동안만 유효한 이미지 태그와 pull 자격증명이 발급됩니다.</p>
+
+  <div class="card" id="login">
+    <div class="f">
+      <label for="pw">Password</label>
+      <input id="pw" type="password" autocomplete="current-password" autofocus>
+    </div>
+    <div class="row">
+      <div><label for="repo">Image</label><select id="repo"></select></div>
+      <div><label for="ttl">TTL (분)</label><input id="ttl" type="number" min="1" max="1440" value="30"></div>
+    </div>
+    <button id="go">이미지 경로 발급</button>
+    <div class="err hide" id="err"></div>
+  </div>
+
+  <div class="card hide" id="out">
+    <div class="f"><div class="hd"><label>만료</label><span class="exp" id="exp"></span></div></div>
+    <div class="f"><div class="hd"><label>exe.dev 로 VM 생성</label><button class="cp" data-c="exe">copy</button></div><pre id="exe"></pre></div>
+    <div class="f"><div class="hd"><label>docker pull</label><button class="cp" data-c="dk">copy</button></div><pre id="dk"></pre></div>
+    <div class="f"><div class="hd"><label>image ref</label><button class="cp" data-c="raw">copy</button></div><pre id="raw"></pre></div>
+    <p class="sub" style="margin:0">만료 후 태그와 토큰 경로가 모두 삭제됩니다. 다시 필요하면 <kbd>재발급</kbd>하세요.</p>
+  </div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+fetch('/api/info').then(r=>r.json()).then(d=>{
+  $('#repo').innerHTML=d.repos.map(r=>`<option>${r}</option>`).join('');
+  if(d.ttl_minutes)$('#ttl').value=d.ttl_minutes;
+}).catch(()=>{});
+async function grant(){
+  const b=$('#go');b.disabled=true;b.textContent='발급 중...';$('#err').classList.add('hide');
+  try{
+    const r=await fetch('/api/grant',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({password:$('#pw').value,repo:$('#repo').value,ttl:+$('#ttl').value})});
+    if(!r.ok)throw new Error(await r.text());
+    const d=await r.json();
+    $('#exe').textContent=d.exe_cmd;
+    $('#dk').textContent=d.docker_cmd;
+    $('#raw').textContent=d.image;
+    $('#exp').textContent=new Date(d.expires).toLocaleString()+`  (${d.ttl_minutes}분)`;
+    $('#out').classList.remove('hide');
+    b.textContent='재발급';
+  }catch(e){
+    $('#err').textContent=String(e.message||e).trim();$('#err').classList.remove('hide');
+    b.textContent='이미지 경로 발급';
+  }finally{b.disabled=false}
+}
+$('#go').onclick=grant;
+$('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')grant()});
+document.addEventListener('click',e=>{
+  const t=e.target.closest('.cp');if(!t)return;
+  navigator.clipboard.writeText($('#'+t.dataset.c).textContent).then(()=>{
+    const o=t.textContent;t.textContent='copied';setTimeout(()=>t.textContent=o,1200)});
+});
+</script>
+</body>
+</html>

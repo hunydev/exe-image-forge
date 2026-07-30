@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily hunydev registry garbage collection
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
