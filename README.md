@@ -31,13 +31,39 @@ exe.dev 호환 커스텀 이미지를 만들고, **암호 인증 후 일정 시�
    - `로그인 안됨` (회색) — 아직 OAuth 미완료
 2. **웹 터미널** — 베이스 이미지 안에서 도는 실제 PTY(xterm.js ↔ websocket ↔ `docker run -it`).
    표의 행이나 `gh`/`codex`/`claude`/`gemini` 버튼을 누르면 해당 로그인 명령이 바로 입력됩니다.
-   컨테이너는 `--network host` 이므로 OAuth localhost 콜백이 이 VM에 도달합니다.
    동시 세션은 1개로 제한되며(자격증명 경합 방지), 소켓이 끊기면 컨테이너도 정리됩니다.
-3. **bake 버튼** — 웹에서 `hunydev/dev:latest` 를 굽고 로그를 실시간으로 스트리밍합니다.
+3. **Gemini 콜백 릴레이** — 아래 "localhost 리다이렉트" 참고.
+4. **bake 버튼** — 웹에서 `hunydev/dev:latest` 를 굽고 로그를 실시간으로 스트리밍합니다.
 
 메인 페이지는 발급 **전에** 문제를 알려줍니다. 만료·미로그인 서비스가 있으면 빨간 배너와
 관리 페이지 바로가기가 뜨므로, 낡은 이미지를 모르고 새 VM에 배포하는 일을 막습니다.
 인증 없이 노출되는 정보는 상태 요약뿐이고, 계정명·파일 경로는 로그인 후에만 보입니다.
+
+## localhost 리다이렉트 회피
+
+원격 VM 에서 OAuth 를 할 때의 핵심 문제입니다. CLI 가 `http://localhost:<포트>` 로 리다이렉트하면
+그 주소는 **당신 노트북의 localhost** 로 해석되므로, VM 에서 대기 중인 리스너에 절대 닿지 않습니다.
+CLI 별로 대응이 다릅니다:
+
+| CLI | 방식 | localhost 사용? |
+| --- | --- | --- |
+| `gh auth login` | device code | 안 함 |
+| `codex login --device-auth` | device code (`auth.openai.com/codex/device` + 1회용 코드) | 안 함 |
+| `claude setup-token` | `platform.claude.com` 로 리다이렉트 후 코드 붙여넣기 | 안 함 |
+| `gemini` | **device code 없음** — 항상 임의 포트 localhost 리스너 | **함 → 릴레이 필요** |
+
+앞의 세 개는 그냥 버튼만 누르면 됩니다. `codex login` (플래그 없이) 은 `localhost:1455` 를 쓰므로
+쓰지 마세요 — UI 와 CLI 모두 `--device-auth` 를 강제합니다.
+
+Gemini 만 릴레이가 필요합니다. 브라우저에서 승인하면 "연결할 수 없음" 페이지로 떨어지는데,
+그 **주소창의 URL 전체**를 복사해서:
+
+- 관리 페이지의 릴레이 입력창에 붙여넣기, 또는
+- `hunyimg relay '<URL>'`
+
+VM 안에서 대신 요청하므로 CLI 가 콜백을 받아 로그인이 완료됩니다.
+릴레이는 `localhost`/`127.0.0.1` + 비특권 포트만 허용합니다 — 그렇지 않으면 이 엔드포인트가
+VM 내부망을 향한 SSRF 도구가 됩니다. 이 거부 규칙은 테스트로 고정돼 있습니다.
 
 ## CLI 사용 흐름
 

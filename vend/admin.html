@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>huny images · admin</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
 <style>
@@ -85,17 +86,29 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
   <div class="card">
     <h2>터미널 <span class="note" id="tstat"></span></h2>
     <p class="note" style="margin:-4px 0 12px">이미지 안에서 실행됩니다. 여기서 로그인하면 자격증명이 영속 HOME에 저장됩니다.
-      OAuth 링크는 브라우저에서 직접 열면 됩니다 (콜백은 <code>--network host</code> 로 이 VM에 도달합니다).</p>
+      아래 버튼은 모두 <b>localhost 리다이렉트를 회피하는</b> 방식을 사용합니다.</p>
     <div class="row" style="margin-bottom:10px">
       <button class="sec" id="tstart">터미널 시작</button>
       <button class="sec" id="tstop" disabled>종료</button>
       <span class="sp"></span>
-      <button class="sec" data-cmd="gh auth login --git-protocol https">gh</button>
-      <button class="sec" data-cmd="codex login">codex</button>
-      <button class="sec" data-cmd="claude">claude</button>
-      <button class="sec" data-cmd="gemini">gemini</button>
+      <button class="sec" data-cmd="gh auth login --git-protocol https" title="device code 방식">gh</button>
+      <button class="sec" data-cmd="codex login --device-auth" title="device code 방식">codex</button>
+      <button class="sec" data-cmd="claude setup-token" title="platform.claude.com 리다이렉트 + 코드 붙여넣기">claude</button>
+      <button class="sec" data-cmd="gemini" title="localhost 콜백 → 아래 릴레이 사용">gemini</button>
     </div>
     <div id="termbox"></div>
+
+    <details id="relaybox" style="margin-top:14px">
+      <summary style="cursor:pointer;color:var(--mut);font-size:13px">Gemini 콜백 릴레이 — “localhost 연결 안됨” 화면이 나오면 여기에 붙여넣으세요</summary>
+      <p class="note" style="margin:12px 0 8px">Gemini CLI 만 device code 방식이 없어서, 로그인 마지막에
+        <code>http://localhost:&lt;포트&gt;/oauth2callback?...</code> 로 리다이렉트됩니다. 그 포트는 이 VM 안에 있으니
+        노트북 브라우저에서는 연결이 실패합니다. 주소창 URL 을 그대로 복사해 넣으면 VM 안에서 대신 요청합니다.</p>
+      <div class="row">
+        <input id="relayurl" placeholder="http://localhost:52341/oauth2callback?code=...&amp;state=..." style="flex:1;min-width:280px">
+        <button id="relaygo">릴레이</button>
+      </div>
+      <div class="note" id="relaystat" style="margin-top:8px"></div>
+    </details>
   </div>
 
   <div class="card">
@@ -138,6 +151,7 @@ async function refresh(){
     ? `<div class="banner b-bad"><b>조치 필요</b><span>${bad.map(c=>c.name).join(', ')} — 아래 터미널에서 로그인한 뒤 bake 하세요.</span></div>`
     : `<div class="banner b-ok"><b>정상</b><span>모든 서비스가 로그인되어 있습니다.</span></div>`;
 
+  maybeOpenRelay(d.creds);
   $('#creds').innerHTML=d.creds.map(c=>`
     <tr class="clk" data-cmd="${c.login_cmd.replace(/"/g,'&quot;')}">
       <td><b>${c.name}</b><div class="note mono">${c.file}</div></td>
@@ -201,6 +215,26 @@ document.addEventListener('click',e=>{
   const t=e.target.closest('[data-cmd]'); if(!t)return;
   runCmd(t.dataset.cmd);
 });
+
+// ---- gemini oauth callback relay ----
+$('#relaygo').onclick=async()=>{
+  const el=$('#relaystat'), b=$('#relaygo');
+  b.disabled=true; el.textContent='요청 중...'; el.style.color='';
+  try{
+    const d=await api('/admin/api/relay',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({url:$('#relayurl').value})});
+    el.textContent=`콜백 서버 응답 ${d.status} — 터미널에서 로그인 완료를 확인하세요`;
+    el.style.color='var(--ok)'; $('#relayurl').value='';
+    setTimeout(refresh,1500);
+  }catch(e){ el.textContent=e.message; el.style.color='var(--bad)'; }
+  finally{ b.disabled=false; }
+};
+$('#relayurl').addEventListener('keydown',e=>{if(e.key==='Enter')$('#relaygo').click()});
+// Open the relay box automatically when gemini still needs a login.
+function maybeOpenRelay(creds){
+  const g=creds.find(c=>c.tool==='gemini');
+  if(g&&g.needs_relay&&(g.state==='missing'||g.state==='expired'))$('#relaybox').open=true;
+}
 
 // ---- bake ----
 let poll;

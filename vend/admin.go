@@ -6,11 +6,14 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -311,4 +314,67 @@ func (a *admin) handleTerm(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// handleRelay replays an OAuth callback URL that the user's browser could not
+// reach. Gemini CLI (unlike codex --device-auth and claude setup-token) has no
+// device flow: it spawns a throwaway HTTP listener on a random localhost port
+// and waits for Google to redirect there. That redirect lands on the user's
+// laptop, not this VM, so it always fails. The user pastes the dead URL here
+// and we issue the request from inside the VM, where the listener actually is.
+func (a *admin) handleRelay(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "POST only", 405)
+		return
+	}
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad json", 400)
+		return
+	}
+	u, err := url.Parse(strings.TrimSpace(req.URL))
+	if err != nil {
+		http.Error(w, "URL을 해석할 수 없습니다", 400)
+		return
+	}
+	// Only ever talk to a loopback callback listener. Without this the endpoint
+	// would be an authenticated SSRF primitive into the VM's network.
+	host := u.Hostname()
+	if u.Scheme != "http" && u.Scheme != "https" {
+		http.Error(w, "http(s) URL 만 허용됩니다", 400)
+		return
+	}
+	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		http.Error(w, "localhost / 127.0.0.1 콜백 URL 만 허용됩니다", 400)
+		return
+	}
+	port := u.Port()
+	if port == "" {
+		http.Error(w, "콜백 포트가 없습니다", 400)
+		return
+	}
+	if p, err := strconv.Atoi(port); err != nil || p < 1024 || p > 65535 {
+		http.Error(w, "콜백 포트가 올바르지 않습니다", 400)
+		return
+	}
+	u.Host = "127.0.0.1:" + port
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	rq, _ := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	resp, err := (&http.Client{}).Do(rq)
+	if err != nil {
+		http.Error(w, "콜백 서버에 연결할 수 없습니다: "+err.Error()+
+			" — CLI 가 아직 대기 중인지 터미널을 확인하세요", 502)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	log.Printf("relayed oauth callback to %s -> %s", u.Host, resp.Status)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"status": resp.StatusCode, "body": string(body),
+	})
 }

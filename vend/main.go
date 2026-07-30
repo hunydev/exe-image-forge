@@ -484,6 +484,7 @@ func main() {
 	mux.HandleFunc("/admin/api/bake", a.require(a.handleBake))
 	mux.HandleFunc("/admin/api/bake-status", a.require(a.handleBakeStatus))
 	mux.HandleFunc("/admin/api/term", a.require(a.handleTerm))
+	mux.HandleFunc("/admin/api/relay", a.require(a.handleRelay))
 	mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
 	})
@@ -496,6 +497,14 @@ func main() {
 		w.Write(adminHTML)
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
+	mux.HandleFunc("/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(faviconSVG)
+	})
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/favicon.svg", http.StatusMovedPermanently)
+	})
 	mux.HandleFunc("/api/info", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		defer s.mu.Unlock()

@@ -41,14 +41,27 @@ cmd_auth(){
   local tool=${1:-}; shift || true
   local run=(docker run --rm -it --network host -e HOME=/home/exedev -u 1000:1000
              -v "$AUTHHOME":/home/exedev -w /home/exedev "$BASE")
+  # All of these avoid a localhost OAuth callback, which would land on the
+  # user's laptop rather than this VM. gh and codex use device codes; claude
+  # setup-token redirects to platform.claude.com and prints a code to paste.
+  # Gemini has no device flow, so it needs the callback relay (see below).
   case "$tool" in
     gh)     "${run[@]}" gh auth login --git-protocol https "$@" ;;
-    codex)  echo "callback: ssh -L 1455:localhost:1455 hunydev-images.exe.xyz"; "${run[@]}" codex login "$@" ;;
-    claude) "${run[@]}" claude "$@" ;;
-    claude-token) "${run[@]}" claude setup-token ;;
-    gemini) echo "callback port varies; use 'ssh -R'/'-L' or GEMINI_API_KEY"; "${run[@]}" gemini "$@" ;;
+    codex)  "${run[@]}" codex login --device-auth "$@" ;;
+    claude|claude-token) "${run[@]}" claude setup-token ;;
+    gemini)
+      cat <<'EOF'
+Gemini CLI has no device-code flow. After you approve in the browser it will try
+to redirect to http://localhost:<port>/oauth2callback?... which your browser
+cannot reach (that port is here, on the VM). Copy that dead URL and either:
+
+  hunyimg relay '<paste the whole localhost URL>'
+
+or paste it into the relay box at https://hunydev-images.exe.xyz/admin/
+EOF
+      "${run[@]}" gemini "$@" ;;
     all)    for t in gh codex claude gemini; do cmd_auth "$t"; done ;;
-    *) die "usage: hunyimg auth {gh|codex|claude|claude-token|gemini|all}" ;;
+    *) die "usage: hunyimg auth {gh|codex|claude|gemini|all}" ;;
   esac
 }
 
@@ -154,6 +167,20 @@ PY
   log "vm token ${t:+stored}${t:-cleared}"
 }
 
+cmd_relay(){
+  # Replay a localhost OAuth callback from inside the VM, where the CLI's
+  # throwaway listener actually is.
+  local u=${1:-}
+  [ -n "$u" ] || die "usage: hunyimg relay '<http://localhost:PORT/oauth2callback?...>'"
+  case "$u" in
+    http://localhost:*|http://127.0.0.1:*|https://localhost:*|https://127.0.0.1:*) ;;
+    *) die "only localhost / 127.0.0.1 callback URLs are allowed" ;;
+  esac
+  log "relaying to ${u%%\?*}"
+  curl -sS --max-time 20 "$u" && echo
+  log "check the terminal running gemini for the result"
+}
+
 cmd_password(){
   read -rsp "new password: " p1; echo
   read -rsp "again: " p2; echo
@@ -194,6 +221,7 @@ case "${1:-help}" in
   verify) shift; cmd_verify "$@" ;;
   password) shift; cmd_password "$@" ;;
   token) shift; cmd_token "$@" ;;
+  relay) shift; cmd_relay "$@" ;;
   import) shift; cmd_import "$@" ;;
   export-hint) shift; cmd_export_hint "$@" ;;
   vend-build) shift; cmd_vend_build "$@" ;;
@@ -203,7 +231,8 @@ case "${1:-help}" in
 hunyimg - custom exe.dev image builder + time-limited image vending
 
   hunyimg build          rebuild the base image (hunydev/base:latest)
-  hunyimg auth <tool>    log in inside the image: gh | codex | claude | claude-token | gemini | all
+  hunyimg auth <tool>    log in inside the image: gh | codex | claude | gemini | all
+  hunyimg relay <url>    replay a gemini localhost OAuth callback from the VM
   hunyimg import [file]  import credentials from a tar (stdin by default)
   hunyimg export-hint    print the command to run on your logged-in machine
   hunyimg shell          interactive shell in the image with the persistent auth HOME

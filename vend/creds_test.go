@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -168,5 +171,103 @@ func TestSummarizeSeparatesSeverity(t *testing.T) {
 	w := summarize(inspectCreds(home))
 	if len(w) != 3 {
 		t.Fatalf("warnings = %v, want missing+expired+stale lines", w)
+	}
+}
+
+// The relay endpoint is an authenticated fetch primitive, so its host
+// restriction is the only thing standing between a stolen session and the VM's
+// internal network. Cover the rejection cases explicitly.
+func TestRelayRejectsNonLoopback(t *testing.T) {
+	a := &admin{srv: &server{cfg: Config{Salt: "00", Hash: "x"}}, sessions: map[string]*session{}}
+	tok := a.newSession()
+
+	for _, tc := range []struct {
+		name, url string
+		wantCode  int
+	}{
+		{"external host", "http://evil.example.com:8080/x", 400},
+		{"metadata service", "http://169.254.169.254/latest/meta-data/", 400},
+		{"private range", "http://10.0.0.5:8000/v2/", 400},
+		{"registry via name", "http://registry:5000/v2/_catalog", 400},
+		{"file scheme", "file:///etc/hunyimg/config.json", 400},
+		{"no port", "http://localhost/oauth2callback", 400},
+		{"privileged port", "http://127.0.0.1:22/", 400},
+		{"loopback ok but nothing listening", "http://127.0.0.1:59999/oauth2callback?code=x", 502},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]string{"url": tc.url})
+			r := httptest.NewRequest("POST", "/admin/api/relay", bytes.NewReader(body))
+			r.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+			w := httptest.NewRecorder()
+			a.require(a.handleRelay)(w, r)
+			if w.Code != tc.wantCode {
+				t.Errorf("%s: got %d want %d (%s)", tc.url, w.Code, tc.wantCode, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestRelayNeedsSession(t *testing.T) {
+	a := &admin{srv: &server{}, sessions: map[string]*session{}}
+	body, _ := json.Marshal(map[string]string{"url": "http://127.0.0.1:59999/x"})
+	r := httptest.NewRequest("POST", "/admin/api/relay", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	a.require(a.handleRelay)(w, r)
+	if w.Code != 401 {
+		t.Errorf("got %d, want 401", w.Code)
+	}
+}
+
+// A real loopback listener must be reached, proving the relay actually works
+// for the gemini flow it exists to serve.
+func TestRelayReachesLoopbackListener(t *testing.T) {
+	got := make(chan string, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.URL.String()
+		w.Write([]byte("authenticated"))
+	}))
+	defer ts.Close()
+
+	a := &admin{srv: &server{}, sessions: map[string]*session{}}
+	tok := a.newSession()
+	// ts.URL is 127.0.0.1:<port>; keep the path/query the CLI would produce.
+	body, _ := json.Marshal(map[string]string{"url": ts.URL + "/oauth2callback?code=abc&state=xyz"})
+	r := httptest.NewRequest("POST", "/admin/api/relay", bytes.NewReader(body))
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: tok})
+	w := httptest.NewRecorder()
+	a.require(a.handleRelay)(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	select {
+	case u := <-got:
+		if u != "/oauth2callback?code=abc&state=xyz" {
+			t.Errorf("listener saw %q, query must be preserved verbatim", u)
+		}
+	default:
+		t.Fatal("listener was never reached")
+	}
+}
+
+// Login commands must never fall back to a localhost callback.
+func TestLoginCommandsAreHeadless(t *testing.T) {
+	creds := inspectCreds(t.TempDir())
+	want := map[string]string{
+		"gh":     "gh auth login --git-protocol https",
+		"codex":  "codex login --device-auth",
+		"claude": "claude setup-token",
+		"gemini": "gemini",
+	}
+	for _, c := range creds {
+		if got := want[c.Tool]; got != c.LoginCmd {
+			t.Errorf("%s: login_cmd = %q, want %q", c.Tool, c.LoginCmd, got)
+		}
+	}
+	// Only gemini lacks a device flow, so only it should ask for the relay.
+	for _, c := range creds {
+		if (c.Tool == "gemini") != c.NeedsRelay {
+			t.Errorf("%s: needs_relay = %v", c.Tool, c.NeedsRelay)
+		}
 	}
 }

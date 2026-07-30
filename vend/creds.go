@@ -30,6 +30,9 @@ type Cred struct {
 	Detail string `json:"detail,omitempty"`
 	// LoginCmd is the command the user should run in the admin terminal.
 	LoginCmd string `json:"login_cmd"`
+	// NeedsRelay marks CLIs whose OAuth flow ends at a localhost callback that
+	// the user's browser cannot reach, so the URL must be relayed.
+	NeedsRelay bool `json:"needs_relay"`
 }
 
 // jwtExp pulls the exp claim out of a JWT without verifying it. We only use it
@@ -106,8 +109,9 @@ func inspectCreds(home string) []Cred {
 	out = append(out, gh)
 
 	// --- codex ------------------------------------------------------
+	// codex: --device-auth avoids the localhost:1455 callback entirely.
 	cx := Cred{Tool: "codex", Name: "Codex CLI", File: ".codex/auth.json",
-		State: "missing", LoginCmd: "codex login"}
+		State: "missing", LoginCmd: "codex login --device-auth"}
 	var cxa struct {
 		APIKey *string `json:"OPENAI_API_KEY"`
 		Tokens *struct {
@@ -139,8 +143,10 @@ func inspectCreds(home string) []Cred {
 	out = append(out, cx)
 
 	// --- claude -----------------------------------------------------
+	// claude: setup-token redirects to platform.claude.com and prints a code to
+	// paste back, so no localhost listener is involved.
 	cl := Cred{Tool: "claude", Name: "Claude Code", File: ".claude/.credentials.json",
-		State: "missing", LoginCmd: "claude  # 그다음 /login"}
+		State: "missing", LoginCmd: "claude setup-token"}
 	var cla struct {
 		OAuth *struct {
 			AccessToken      string `json:"accessToken"`
@@ -163,8 +169,10 @@ func inspectCreds(home string) []Cred {
 	out = append(out, cl)
 
 	// --- gemini -----------------------------------------------------
+	// gemini: no device flow exists; it always spawns a localhost listener, so
+	// the callback URL has to be relayed back into the VM. See handleRelay.
 	gm := Cred{Tool: "gemini", Name: "Gemini CLI", File: ".gemini/oauth_creds.json",
-		State: "missing", LoginCmd: "gemini  # 그다음 /auth"}
+		State: "missing", LoginCmd: "gemini", NeedsRelay: true}
 	var gma struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
