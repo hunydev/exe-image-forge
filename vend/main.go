@@ -44,6 +44,8 @@ type Config struct {
 	AuthHome string `json:"auth_home"`
 	// DevImage is the baked image whose freshness we report.
 	DevImage string `json:"dev_image"`
+	// PasskeyFile stores registered WebAuthn credentials.
+	PasskeyFile string `json:"passkey_file"`
 }
 
 type Grant struct {
@@ -447,6 +449,9 @@ func main() {
 	if cfg.DevImage == "" {
 		cfg.DevImage = "hunydev/dev:latest"
 	}
+	if cfg.PasskeyFile == "" {
+		cfg.PasskeyFile = "/var/lib/hunyimg/passkeys.json"
+	}
 
 	ru, err := url.Parse(*registryURL)
 	if err != nil {
@@ -475,12 +480,23 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
-	a := &admin{srv: s, sessions: map[string]*session{}}
+	a := &admin{
+		srv:      s,
+		sessions: map[string]*session{},
+		pk:       loadPasskeyStore(cfg.PasskeyFile),
+	}
 	mux.HandleFunc("/v2/", s.handleV2)
 	mux.HandleFunc("/api/grant", s.handleGrant)
 	mux.HandleFunc("/api/creds", a.handleCreds)
 	mux.HandleFunc("/admin/api/login", a.handleLogin)
 	mux.HandleFunc("/admin/api/logout", a.handleLogout)
+	// Passkey login needs no prior session; everything else does.
+	mux.HandleFunc("/admin/api/passkey/login/begin", a.handlePasskeyLoginBegin)
+	mux.HandleFunc("/admin/api/passkey/login/finish", a.handlePasskeyLoginFinish)
+	mux.HandleFunc("/admin/api/passkey/register/begin", a.require(a.handlePasskeyRegisterBegin))
+	mux.HandleFunc("/admin/api/passkey/register/finish", a.require(a.handlePasskeyRegisterFinish))
+	mux.HandleFunc("/admin/api/passkey/list", a.require(a.handlePasskeyList))
+	mux.HandleFunc("/admin/api/passkey/delete", a.require(a.handlePasskeyDelete))
 	mux.HandleFunc("/admin/api/bake", a.require(a.handleBake))
 	mux.HandleFunc("/admin/api/bake-status", a.require(a.handleBakeStatus))
 	mux.HandleFunc("/admin/api/term", a.require(a.handleTerm))

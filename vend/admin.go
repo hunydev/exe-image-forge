@@ -19,6 +19,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 const sessionCookie = "hunyimg_admin"
@@ -29,10 +30,17 @@ type session struct {
 
 type admin struct {
 	srv *server
+	pk  *passkeyStore
 
 	mu       sync.Mutex
 	sessions map[string]*session
 	termBusy bool
+	// In-flight WebAuthn ceremonies. There is a single admin account and the
+	// ceremonies are short-lived, so one slot each is enough.
+	regSession   *webauthn.SessionData
+	regRPID      string
+	loginSession *webauthn.SessionData
+	loginRPID    string
 
 	// bake state, so the UI can show a running/last-result banner.
 	bakeMu      sync.Mutex
@@ -140,6 +148,7 @@ func (a *admin) handleCreds(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"creds": creds, "warnings": summarize(creds), "authed": true,
 			"baked": a.srv.bakedAt(), "authed_home": a.srv.cfg.AuthHome,
+			"passkeys": a.passkeyCountFor(r), "passkeys_total": a.pk.count(),
 		})
 		return
 	}
@@ -150,8 +159,18 @@ func (a *admin) handleCreds(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(map[string]any{
 		"warnings": summarize(creds), "counts": counts, "authed": false,
-		"baked": a.srv.bakedAt(),
+		"baked": a.srv.bakedAt(), "passkeys": a.passkeyCountFor(r),
 	})
+}
+
+// passkeyCountFor reports how many passkeys are usable on the host the request
+// arrived on, so the login page knows whether to offer the button.
+func (a *admin) passkeyCountFor(r *http.Request) int {
+	_, rpid, err := a.rpFor(r)
+	if err != nil {
+		return 0
+	}
+	return len(a.pk.forRP(rpid))
 }
 
 func (a *admin) handleBake(w http.ResponseWriter, r *http.Request) {
