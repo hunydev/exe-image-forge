@@ -6,8 +6,10 @@ exe.dev 호환 커스텀 이미지를 만들고, **암호 인증 후 일정 시�
 
 ```
 브라우저 ──HTTPS──▶ exe.dev proxy ──▶ :8000 vend (Go)
-                                       ├── / , /api/grant   비밀번호 → 임시 토큰 경로 발급
-                                       └── /v2/t/<token>/…  토큰 스코프 registry 프록시
+                                       ├── /                발급 페이지 (자격증명 경고 표시)
+                                       ├── /admin/          관리 페이지 (웹 터미널 + bake)
+                                       ├── /api/grant        비밀번호 → 임시 토큰 경로 발급
+                                       └── /v2/t/<token>/…   토큰 스코프 registry 프록시
                                                   │
                                                   ▼
                                           :5000 registry:2 (localhost only)
@@ -18,14 +20,32 @@ exe.dev 호환 커스텀 이미지를 만들고, **암호 인증 후 일정 시�
 - 발급 시 `LABEL`만 다른 얇은 레이어를 새 태그로 push → 태그별 digest가 고유하므로 만료 시 개별 삭제 가능
 - 만료되면 태그·토큰 경로 삭제, blob은 매일 `hunyimg-gc.timer`가 회수
 
-## 사용 흐름
+## 웹에서 전체 관리 (`/admin/`)
+
+메인과 **동일한 암호**로 로그인합니다. SSH 없이 브라우저만으로 끝낼 수 있습니다.
+
+1. **자격증명 상태표** — 서비스별 만료 시각을 계산해 남은 시간/경과 시간으로 보여줍니다.
+   - `정상` — 유효
+   - `액세스 토큰 만료` (노랑) — refresh 토큰이 있어 CLI가 첫 실행 시 자동 갱신. 보통 조치 불필요
+   - `만료됨` / `확인 불가` (빨강) — 재로그인 필요
+   - `로그인 안됨` (회색) — 아직 OAuth 미완료
+2. **웹 터미널** — 베이스 이미지 안에서 도는 실제 PTY(xterm.js ↔ websocket ↔ `docker run -it`).
+   표의 행이나 `gh`/`codex`/`claude`/`gemini` 버튼을 누르면 해당 로그인 명령이 바로 입력됩니다.
+   컨테이너는 `--network host` 이므로 OAuth localhost 콜백이 이 VM에 도달합니다.
+   동시 세션은 1개로 제한되며(자격증명 경합 방지), 소켓이 끊기면 컨테이너도 정리됩니다.
+3. **bake 버튼** — 웹에서 `hunydev/dev:latest` 를 굽고 로그를 실시간으로 스트리밍합니다.
+
+메인 페이지는 발급 **전에** 문제를 알려줍니다. 만료·미로그인 서비스가 있으면 빨간 배너와
+관리 페이지 바로가기가 뜨므로, 낡은 이미지를 모르고 새 VM에 배포하는 일을 막습니다.
+인증 없이 노출되는 정보는 상태 요약뿐이고, 계정명·파일 경로는 로그인 후에만 보입니다.
+
+## CLI 사용 흐름
 
 ```sh
 hunyimg build                  # 베이스 이미지 빌드
 hunyimg auth gh                # 이미지 안에서 로그인 (또는 hunyimg import)
 hunyimg status                 # 자격증명 확인
 hunyimg bake                   # hunydev/dev:latest 생성
-# 이후 https://hunydev-images.exe.xyz/ 에서 암호 입력 → 경로 발급
 ```
 
 자격증명은 `/var/lib/hunyimg/authhome` 에 보존됩니다. 이미지를 재빌드해도 유지되고, `bake` 할 때만 이미지에 들어갑니다.
@@ -68,7 +88,9 @@ exe.dev 프록시는 HTTPS 만 노출하며 기본이 **인증 게이트(private
 ## 보안
 
 - 비밀번호는 PBKDF2-HMAC-SHA256 (210k iters, 랜덤 salt) 로 `/etc/hunyimg/config.json` 에 저장
-- 5회 실패 후 지수적 lockout
+- 5회 실패 후 지수적 lockout (발급/관리 로그인 공유)
+- 관리 세션은 HttpOnly·Secure·SameSite=Lax 쿠키, 8시간 만료
+- 터미널·bake·자격증명 상세는 모두 세션 필수 (미인증 시 401)
 - 발급 토큰은 128비트 랜덤, 읽기 전용, 단일 repo 스코프, TTL 최대 24h
 - backing registry 는 `127.0.0.1:5000` 만 바인딩되어 외부에서 직접 접근 불가
 

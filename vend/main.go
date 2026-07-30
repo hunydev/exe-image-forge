@@ -40,6 +40,10 @@ type Config struct {
 	SourceImage map[string]string `json:"source_image"`
 	// TTL of a grant.
 	TTLMinutes int `json:"ttl_minutes"`
+	// AuthHome is the persistent home directory holding CLI credentials.
+	AuthHome string `json:"auth_home"`
+	// DevImage is the baked image whose freshness we report.
+	DevImage string `json:"dev_image"`
 }
 
 type Grant struct {
@@ -381,6 +385,20 @@ func (s *server) handleV2(w http.ResponseWriter, r *http.Request) {
 	s.registry.ServeHTTP(w, r2)
 }
 
+// bakedAt reports when the baked dev image was last built, for the UI.
+func (s *server) bakedAt() string {
+	img := s.cfg.DevImage
+	if img == "" {
+		return ""
+	}
+	out, err := exec.Command("docker", "image", "inspect", img,
+		"--format", `{{index .Config.Labels "dev.huny.baked"}}`).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8000", "listen address")
 	cfgPath := flag.String("config", "/etc/hunyimg/config.json", "config file")
@@ -423,6 +441,12 @@ func main() {
 	if len(cfg.Repos) == 0 {
 		log.Fatal("config: repos empty")
 	}
+	if cfg.AuthHome == "" {
+		cfg.AuthHome = "/var/lib/hunyimg/authhome"
+	}
+	if cfg.DevImage == "" {
+		cfg.DevImage = "hunydev/dev:latest"
+	}
 
 	ru, err := url.Parse(*registryURL)
 	if err != nil {
@@ -451,8 +475,26 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
+	a := &admin{srv: s, sessions: map[string]*session{}}
 	mux.HandleFunc("/v2/", s.handleV2)
 	mux.HandleFunc("/api/grant", s.handleGrant)
+	mux.HandleFunc("/api/creds", a.handleCreds)
+	mux.HandleFunc("/admin/api/login", a.handleLogin)
+	mux.HandleFunc("/admin/api/logout", a.handleLogout)
+	mux.HandleFunc("/admin/api/bake", a.require(a.handleBake))
+	mux.HandleFunc("/admin/api/bake-status", a.require(a.handleBakeStatus))
+	mux.HandleFunc("/admin/api/term", a.require(a.handleTerm))
+	mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/admin/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/admin/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(adminHTML)
+	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.HandleFunc("/api/info", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()

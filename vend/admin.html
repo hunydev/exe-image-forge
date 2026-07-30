@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>huny images · admin</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+<style>
+:root{color-scheme:dark;--bg:#0d1117;--fg:#e6edf3;--mut:#8b949e;--card:#161b22;--line:#30363d;--acc:#2f81f7;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans KR",sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:24px}
+header{display:flex;align-items:baseline;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+h1{font-size:20px;margin:0}
+h2{font-size:14px;margin:0 0 12px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+a{color:var(--acc)}
+.sp{flex:1}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+label{display:block;font-size:12px;color:var(--mut);margin:0 0 6px;text-transform:uppercase;letter-spacing:.04em}
+input{width:100%;background:#0d1117;border:1px solid var(--line);border-radius:8px;color:var(--fg);padding:10px 12px;font:inherit}
+input:focus{outline:none;border-color:var(--acc)}
+button{background:var(--acc);border:0;border-radius:8px;color:#fff;font:600 14px/1 inherit;padding:10px 16px;cursor:pointer}
+button.sec{background:transparent;border:1px solid var(--line);color:var(--fg)}
+button.sec:hover{border-color:var(--acc)}
+button:disabled{opacity:.55;cursor:default}
+button.full{width:100%;margin-top:14px;padding:12px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;padding:0 10px 8px;font-weight:600}
+td{padding:10px;border-top:1px solid var(--line);vertical-align:middle}
+tr.clk{cursor:pointer}
+tr.clk:hover td{background:#1c2128}
+.pill{display:inline-block;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.s-ok{background:rgba(63,185,80,.15);color:var(--ok)}
+.s-stale{background:rgba(210,153,34,.15);color:var(--warn)}
+.s-expired,.s-unknown{background:rgba(248,81,73,.15);color:var(--bad)}
+.s-missing{background:rgba(139,148,158,.15);color:var(--mut)}
+.note{font-size:12.5px;color:var(--mut)}
+.mono{font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+.banner{border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13.5px;display:flex;gap:10px;align-items:flex-start}
+.b-warn{background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.4)}
+.b-bad{background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.4)}
+.b-ok{background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.4)}
+#termbox{background:#000;border:1px solid var(--line);border-radius:10px;padding:8px;height:460px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;max-height:240px;margin:12px 0 0}
+.hide{display:none}
+code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-size:12.5px}
+.err{color:var(--bad);font-size:13px;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div id="gate" class="hide">
+  <header><h1>huny images · admin</h1></header>
+  <div class="card" style="max-width:420px">
+    <label for="pw">Password</label>
+    <input id="pw" type="password" autocomplete="current-password" autofocus>
+    <button id="login" class="full">로그인</button>
+    <div class="err hide" id="lerr"></div>
+    <p class="note" style="margin:12px 0 0">메인 페이지와 동일한 암호입니다.</p>
+  </div>
+</div>
+
+<div id="app" class="hide">
+  <header>
+    <h1>huny images · admin</h1>
+    <span class="sp"></span>
+    <a href="/">← 발급 페이지</a>
+    <button class="sec" id="logout">로그아웃</button>
+  </header>
+
+  <div id="banners"></div>
+
+  <div class="card">
+    <h2>자격증명 상태</h2>
+    <table>
+      <thead><tr><th>서비스</th><th>상태</th><th>만료</th><th>계정</th><th></th></tr></thead>
+      <tbody id="creds"></tbody>
+    </table>
+    <p class="note" style="margin:14px 0 0">행을 클릭하면 아래 터미널에 로그인 명령이 입력됩니다.
+      <span style="color:var(--warn)">액세스 토큰 만료</span>는 refresh 토큰이 있으므로 CLI가 첫 실행 시 자동 갱신합니다 — 보통 조치가 필요 없습니다.</p>
+  </div>
+
+  <div class="card">
+    <h2>터미널 <span class="note" id="tstat"></span></h2>
+    <p class="note" style="margin:-4px 0 12px">이미지 안에서 실행됩니다. 여기서 로그인하면 자격증명이 영속 HOME에 저장됩니다.
+      OAuth 링크는 브라우저에서 직접 열면 됩니다 (콜백은 <code>--network host</code> 로 이 VM에 도달합니다).</p>
+    <div class="row" style="margin-bottom:10px">
+      <button class="sec" id="tstart">터미널 시작</button>
+      <button class="sec" id="tstop" disabled>종료</button>
+      <span class="sp"></span>
+      <button class="sec" data-cmd="gh auth login --git-protocol https">gh</button>
+      <button class="sec" data-cmd="codex login">codex</button>
+      <button class="sec" data-cmd="claude">claude</button>
+      <button class="sec" data-cmd="gemini">gemini</button>
+    </div>
+    <div id="termbox"></div>
+  </div>
+
+  <div class="card">
+    <h2>이미지 굽기 (bake)</h2>
+    <p class="note" style="margin:-4px 0 12px">현재 자격증명을 <code>hunydev/dev:latest</code> 로 굽습니다.
+      마지막 bake: <span id="bakedat" class="mono">-</span></p>
+    <div class="row">
+      <button id="bake">지금 bake</button>
+      <span class="note" id="bstat"></span>
+    </div>
+    <pre id="blog" class="mono hide"></pre>
+  </div>
+</div>
+</div>
+
+<script type="module">
+import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
+import { FitAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
+
+const $=s=>document.querySelector(s);
+const KO={ok:'정상',stale:'액세스 토큰 만료',expired:'만료됨',missing:'로그인 안됨',unknown:'확인 불가'};
+
+function fmtLeft(sec){
+  if(sec===undefined||sec===0)return '';
+  const a=Math.abs(sec), d=Math.floor(a/86400), h=Math.floor(a%86400/3600), m=Math.floor(a%3600/60);
+  const s=d?`${d}일 ${h}시간`:h?`${h}시간 ${m}분`:`${m}분`;
+  return sec<0?`${s} 전 만료`:`${s} 남음`;
+}
+
+async function api(p,o){const r=await fetch(p,o);if(!r.ok)throw new Error((await r.text()).trim());return r.json()}
+
+async function refresh(){
+  const d=await api('/api/creds');
+  if(!d.authed){$('#gate').classList.remove('hide');$('#app').classList.add('hide');return false}
+  $('#gate').classList.add('hide');$('#app').classList.remove('hide');
+  $('#bakedat').textContent=d.baked?new Date(d.baked).toLocaleString():'없음';
+
+  const bad=d.creds.filter(c=>c.state==='missing'||c.state==='expired'||c.state==='unknown');
+  $('#banners').innerHTML = bad.length
+    ? `<div class="banner b-bad"><b>조치 필요</b><span>${bad.map(c=>c.name).join(', ')} — 아래 터미널에서 로그인한 뒤 bake 하세요.</span></div>`
+    : `<div class="banner b-ok"><b>정상</b><span>모든 서비스가 로그인되어 있습니다.</span></div>`;
+
+  $('#creds').innerHTML=d.creds.map(c=>`
+    <tr class="clk" data-cmd="${c.login_cmd.replace(/"/g,'&quot;')}">
+      <td><b>${c.name}</b><div class="note mono">${c.file}</div></td>
+      <td><span class="pill s-${c.state}">${KO[c.state]||c.state}</span></td>
+      <td class="note">${c.expires?fmtLeft(c.seconds_left):'—'}</td>
+      <td class="note">${c.detail||'—'}</td>
+      <td><button class="sec">로그인</button></td>
+    </tr>`).join('');
+  return true;
+}
+
+// ---- login gate ----
+async function doLogin(){
+  try{
+    await api('/admin/api/login',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({password:$('#pw').value})});
+    $('#lerr').classList.add('hide'); await refresh();
+  }catch(e){$('#lerr').textContent=e.message;$('#lerr').classList.remove('hide')}
+}
+$('#login').onclick=doLogin;
+$('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
+$('#logout').onclick=async()=>{await fetch('/admin/api/logout',{method:'POST'});location.reload()};
+
+// ---- terminal ----
+let term,fit,ws;
+function ensureTerm(){
+  if(term)return;
+  term=new Terminal({fontSize:13,fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace',
+    theme:{background:'#000000',foreground:'#e6edf3'},cursorBlink:true,scrollback:5000});
+  fit=new FitAddon(); term.loadAddon(fit);
+  term.open($('#termbox')); fit.fit();
+  addEventListener('resize',()=>{fit.fit();sendSize()});
+}
+function sendSize(){
+  if(ws&&ws.readyState===1)ws.send('\x00'+JSON.stringify({cols:term.cols,rows:term.rows}));
+}
+function startTerm(){
+  ensureTerm();
+  if(ws&&ws.readyState<=1)return;
+  const u=new URL('/admin/api/term',location.href);
+  u.protocol=location.protocol==='https:'?'wss:':'ws:';
+  u.searchParams.set('cols',term.cols); u.searchParams.set('rows',term.rows);
+  ws=new WebSocket(u); ws.binaryType='arraybuffer';
+  $('#tstat').textContent='연결 중...';
+  ws.onopen=()=>{$('#tstat').textContent='연결됨';$('#tstop').disabled=false;$('#tstart').disabled=true;sendSize();term.focus()};
+  ws.onmessage=e=>term.write(typeof e.data==='string'?e.data:new Uint8Array(e.data));
+  ws.onclose=()=>{$('#tstat').textContent='종료됨';$('#tstop').disabled=true;$('#tstart').disabled=false;refresh()};
+  ws.onerror=()=>{$('#tstat').textContent='연결 실패'};
+  if(!startTerm._bound){startTerm._bound=true;term.onData(d=>{if(ws&&ws.readyState===1)ws.send(d)})}
+}
+$('#tstart').onclick=startTerm;
+$('#tstop').onclick=()=>ws&&ws.close();
+
+function runCmd(cmd){
+  const c=cmd.split('#')[0].trim();
+  if(!ws||ws.readyState!==1){startTerm();setTimeout(()=>runCmd(cmd),1400);return}
+  $('#termbox').scrollIntoView({behavior:'smooth',block:'center'});
+  ws.send(c+'\n'); term.focus();
+}
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-cmd]'); if(!t)return;
+  runCmd(t.dataset.cmd);
+});
+
+// ---- bake ----
+let poll;
+$('#bake').onclick=async()=>{
+  $('#bake').disabled=true; $('#bstat').textContent='실행 중...'; $('#blog').classList.remove('hide');
+  try{ await api('/admin/api/bake',{method:'POST'}); }
+  catch(e){ $('#bstat').textContent=e.message; $('#bake').disabled=false; return }
+  clearInterval(poll);
+  poll=setInterval(async()=>{
+    const d=await api('/admin/api/bake-status');
+    // Strip ANSI so the log stays readable in a plain <pre>.
+    $('#blog').textContent=(d.log||[]).join('\n').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'');
+    $('#blog').scrollTop=$('#blog').scrollHeight;
+    if(!d.running){
+      clearInterval(poll); $('#bake').disabled=false;
+      $('#bstat').textContent=d.error?('실패: '+d.error):'완료';
+      $('#bstat').style.color=d.error?'var(--bad)':'var(--ok)';
+      refresh();
+    }
+  },1200);
+};
+
+refresh().catch(()=>{$('#gate').classList.remove('hide')});
+setInterval(()=>{if(!$('#app').classList.contains('hide'))refresh().catch(()=>{})},60000);
+</script>
+</body>
+</html>

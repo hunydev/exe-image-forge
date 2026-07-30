@@ -27,13 +27,24 @@ pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12
 .err{color:#f85149;font-size:13px;margin-top:12px}
 .exp{color:var(--ok);font-size:13px;font-weight:600}
 .hide{display:none}
+.banner{border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13.5px}
+.banner b{display:block;margin-bottom:3px}
+.b-warn{background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.4)}
+.b-bad{background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.4)}
+.banner a{color:var(--acc);font-weight:600}
+.topbar{display:flex;align-items:baseline;gap:12px;margin-bottom:4px}
+.topbar .sp{flex:1}
+.topbar a{color:var(--mut);font-size:13px;text-decoration:none}
+.topbar a:hover{color:var(--acc)}
 kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>huny images</h1>
-  <p class="sub">비밀번호를 입력하면 지정 시간 동안만 유효한 이미지 태그와 pull 자격증명이 발급됩니다.</p>
+  <div class="topbar"><h1>huny images</h1><span class="sp"></span><a href="/admin/">관리 페이지 →</a></div>
+  <p class="sub">비밀번호를 입력하면 지정 시간 동안만 유효한 이미지 경로가 발급됩니다.</p>
+
+  <div id="banners"></div>
 
   <div class="card" id="login">
     <div class="f">
@@ -61,6 +72,18 @@ const $=s=>document.querySelector(s);
 fetch('/api/info').then(r=>r.json()).then(d=>{
   $('#repo').innerHTML=d.repos.map(r=>`<option>${r}</option>`).join('');
   if(d.ttl_minutes)$('#ttl').value=d.ttl_minutes;
+}).catch(()=>{});
+
+// Warn about credential problems before an image path is handed out, so a
+// stale image is not shipped to a fresh VM unnoticed.
+fetch('/api/creds').then(r=>r.json()).then(d=>{
+  const w=d.warnings||[]; if(!w.length)return;
+  const c=d.counts||{}, severe=(c.missing||0)+(c.expired||0)+(c.unknown||0);
+  $('#banners').innerHTML=`<div class="banner ${severe?'b-bad':'b-warn'}">
+    <b>${severe?'구워진 이미지의 자격증명에 문제가 있습니다':'참고'}</b>
+    ${w.map(x=>`<div>${x}</div>`).join('')}
+    ${severe?'<div style="margin-top:8px"><a href="/admin/">관리 페이지에서 로그인하고 다시 bake →</a></div>':''}
+  </div>`;
 }).catch(()=>{});
 async function grant(){
   const b=$('#go');b.disabled=true;b.textContent='발급 중...';$('#err').classList.add('hide');
