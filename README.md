@@ -275,3 +275,25 @@ Gemini CLI 0.53 은 토큰을 `~/.gemini/gemini-credentials.json` 에 **암호�
 
 `.gemini/oauth_creds.json` 만 찾던 예전 코드가 로그인을 인식하지 못한 것도 같은 이유입니다.
 지금은 두 형식을 모두 인식합니다.
+
+
+## base 와 dev 를 헷갈리지 마세요
+
+| 리포지토리 | 내용 |
+|---|---|
+| `hunydev/dev` | 도구 + **로그인된 자격증명** ← 이걸 받으세요 |
+| `hunydev/base` | 도구만. 자격증명 없음 (bake 의 재료) |
+
+`hunydev/base` 를 받으면 `gh auth status`, codex, claude, gemini 모두 **로그인이 안 된 상태**입니다.
+버그가 아니라 설계입니다 — base 는 자격증명이 들어가기 전 단계입니다.
+
+예전에는 홈 화면 드롭다운에 `hunydev/base` 가 먼저 떠서 기본 선택이었고, 이름만으로는 차이를
+알 수 없었습니다. 지금은 `hunydev/dev` 가 기본이고 두 항목 모두 라벨로 구분됩니다.
+
+bake 는 끝나고 실제로 로그인이 넘어갔는지 확인합니다:
+
+```
+==> verified: all four logins survive into hunydev/dev:min
+```
+
+넘어가지 않았으면 `warn: baked image: <tool> is NOT logged in` 이 뜹니다.

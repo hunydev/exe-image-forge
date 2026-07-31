@@ -746,3 +746,49 @@ func TestBakeConvertsGeminiCredentialsToAPortableForm(t *testing.T) {
 		t.Errorf("converter missing: %v", err)
 	}
 }
+
+// The vending page lists both repos, and their bare names do not reveal that
+// only one carries credentials. Defaulting to the credential-less base image
+// meant the obvious choice produced a VM where every CLI was logged out --
+// the exact problem this project exists to solve.
+func TestVendingPrefersAndLabelsTheCredentialedImage(t *testing.T) {
+	s := &server{cfg: Config{Repos: []string{"hunydev/dev", "hunydev/base"}}}
+	info := s.repoInfo()
+	if len(info) != 2 {
+		t.Fatalf("got %d repos", len(info))
+	}
+	// First entry is the default selection in the UI.
+	if info[0]["name"] != "hunydev/dev" || info[0]["baked"] != true {
+		t.Errorf("default repo is %v (baked=%v); the credentialed image must "+
+			"come first", info[0]["name"], info[0]["baked"])
+	}
+	for _, r := range info {
+		label, _ := r["label"].(string)
+		if !strings.Contains(label, "로그인") && !strings.Contains(label, "자격증명") {
+			t.Errorf("label %q does not say whether credentials are included", label)
+		}
+	}
+}
+
+// bake must confirm the logins actually made it into the image. A dev image
+// that ships logged out looks fine until someone tries to use it.
+func TestBakeVerifiesTheLoginsSurvive(t *testing.T) {
+	b, err := os.ReadFile("../hunyimg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	i := strings.Index(src, "cmd_bake()")
+	bake := src[i:]
+	if j := strings.Index(bake, "\ncmd_"); j > 0 {
+		bake = bake[:j]
+	}
+	for _, tool := range []string{"gh", "codex", "claude", "gemini"} {
+		if !strings.Contains(bake, `"`+tool+`"`) && !strings.Contains(bake, " "+tool+" ") {
+			t.Errorf("bake does not verify %s is logged in afterwards", tool)
+		}
+	}
+	if !strings.Contains(bake, "NOT logged in") {
+		t.Error("bake does not warn when a credential failed to carry over")
+	}
+}

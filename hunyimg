@@ -227,7 +227,26 @@ EOF
     docker build --provenance=false --sbom=false -t "hunydev/dev:$v" "$CTX"
   done
   docker tag hunydev/dev:min "$DEV" 2>/dev/null || true
-  log "baked. vend from the web UI; components are chosen there per request"
+
+  # A dev image whose whole purpose is carrying logins, that ships logged out,
+  # is worse than no image: it looks fine until someone tries to use it.
+  local checked="${only:-min}"
+  if docker image inspect "hunydev/dev:$checked" >/dev/null 2>&1; then
+    local bad=0 out
+    out=$(docker run --rm -u 1000:1000 -e HOME=/home/exedev --entrypoint bash \
+      "hunydev/dev:$checked" -c '
+        gh auth status    >/dev/null 2>&1 && echo gh
+        codex login status >/dev/null 2>&1 && echo codex
+        claude auth status --json 2>/dev/null | tr -d " " | grep -q "loggedIn\":true" && echo claude
+        { [ -s ~/.gemini/gemini-credentials.json ] || [ -s ~/.gemini/oauth_creds.json ] \
+          || [ -n "${GEMINI_API_KEY:-}" ]; } && echo gemini
+      ' 2>/dev/null) || true
+    for t in gh codex claude gemini; do
+      grep -qx "$t" <<<"$out" || { warn "baked image: $t is NOT logged in"; bad=1; }
+    done
+    [ "$bad" = 0 ] && log "verified: all four logins survive into hunydev/dev:$checked"
+  fi
+  log "baked. vend hunydev/dev (NOT hunydev/base) to get the credentials"
 }
 
 cmd_verify(){

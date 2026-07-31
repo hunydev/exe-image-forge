@@ -591,7 +591,7 @@ func main() {
 		defer s.mu.Unlock()
 		s.gcLocked()
 		out := map[string]any{
-			"repos": s.cfg.Repos, "pull_host": s.cfg.PullHost,
+			"repos": s.repoInfo(), "pull_host": s.cfg.PullHost,
 			"ttl_minutes": s.cfg.TTLMinutes, "active_count": len(s.byToken),
 			"variants": vars,
 		}
@@ -619,4 +619,23 @@ func main() {
 	log.Printf("vend listening on %s (pull host %s, repos %v)", *addr, cfg.PullHost, cfg.Repos)
 	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 20 * time.Second}
 	log.Fatal(srv.ListenAndServe())
+}
+
+// repoInfo describes each vendable repo. The names alone do not say which one
+// carries the pre-authenticated credentials, and picking wrong yields an image
+// where every CLI is logged out -- the exact thing this project exists to
+// avoid. So say it plainly in the UI.
+func (s *server) repoInfo() []map[string]any {
+	out := make([]map[string]any, 0, len(s.cfg.Repos))
+	for _, r := range s.cfg.Repos {
+		baked := strings.HasSuffix(r, "/dev")
+		label, note := r+" (자격증명 없음)", "도구만 설치됨 · 직접 로그인 필요"
+		if baked {
+			label, note = r+" (로그인 됨)", "codex · claude · gemini · gh 인증 포함"
+		}
+		out = append(out, map[string]any{
+			"name": r, "label": label, "note": note, "baked": baked,
+		})
+	}
+	return out
 }

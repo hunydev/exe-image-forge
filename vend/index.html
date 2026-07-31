@@ -70,7 +70,8 @@ kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1p
       <input id="pw" type="password" autocomplete="current-password" autofocus>
     </div>
     <div class="row">
-      <div><label for="repo">Image</label><select id="repo"></select></div>
+      <div><label for="repo">Image</label><select id="repo"></select>
+        <div class="note" id="reponote" style="margin-top:6px"></div></div>
       <div><label for="ttl">TTL (분)</label><input id="ttl" type="number" min="1" max="1440" value="30"></div>
     </div>
     <div class="f">
@@ -100,7 +101,11 @@ kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1p
 <script>
 const $=s=>document.querySelector(s);
 fetch('/api/info').then(r=>r.json()).then(d=>{
-  $('#repo').innerHTML=d.repos.map(r=>`<option>${r}</option>`).join('');
+  $('#repo').innerHTML=d.repos.map(r=>
+    `<option value="${r.name}" data-note="${r.note}">${r.label}</option>`).join('');
+  const showNote=()=>{const o=$('#repo').selectedOptions[0];
+    $('#reponote').textContent=o?o.dataset.note:''};
+  $('#repo').onchange=showNote; showNote();
   if(d.ttl_minutes)$('#ttl').value=d.ttl_minutes;
   VARIANTS=d.variants||{};
   // Show what each toggle actually costs, so the choice is informed.
