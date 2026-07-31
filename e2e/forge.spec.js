@@ -74,6 +74,7 @@ test('admin tabs expose fixture status without real credentials', async ({ page 
 
 test('documentation screenshots @screenshots', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium', 'Documentation uses the desktop layout');
+  test.skip(process.env.UPDATE_SCREENSHOTS !== '1', 'Run make screenshots to update documentation');
 
   await signIn(page);
   await expect(page.locator('#grantapp')).toBeVisible();

@@ -1,0 +1,14 @@
+[Unit]
+Description=Start the private Exe Image Forge registry
+Requires=docker.service exe-image-forge-initialize.service
+After=docker.service exe-image-forge-initialize.service
+Before=exe-image-forge-vend.service exe-image-forge-bootstrap.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/exe-image-forge-start-registry
+RemainAfterExit=yes
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=multi-user.target

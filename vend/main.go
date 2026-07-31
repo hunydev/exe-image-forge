@@ -75,6 +75,7 @@ type server struct {
 	cfgPath          string
 	statePath        string
 	demo             bool
+	terminalMode     string
 	registry         *httputil.ReverseProxy
 	registryURL      *url.URL
 	registryLockPath string
@@ -1141,11 +1142,18 @@ func main() {
 		cfgPath:          *cfgPath,
 		statePath:        *statePath,
 		demo:             *demo,
+		terminalMode:     strings.TrimSpace(os.Getenv("FORGE_TERMINAL_MODE")),
 		registry:         httputil.NewSingleHostReverseProxy(ru),
 		registryURL:      ru,
 		registryLockPath: os.Getenv("FORGE_REGISTRY_LOCK"),
 		orphanGrace:      defaultOrphanGrace,
 		byToken:          map[string]*Grant{},
+	}
+	if s.terminalMode == "" {
+		s.terminalMode = "container"
+	}
+	if s.terminalMode != "container" && s.terminalMode != "auth-host" {
+		log.Fatalf("FORGE_TERMINAL_MODE must be container or auth-host")
 	}
 	if s.demo {
 		s.publishImage = func(context.Context, string, string, string) error { return nil }

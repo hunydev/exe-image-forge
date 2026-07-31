@@ -33,6 +33,7 @@ product.
   collection
 - A loopback-only fixture server and desktop/mobile browser tests
 - Daily CLI updates inside running images and a weekly forge refresh timer
+- A bootable, multi-platform appliance published to GHCR on every release
 
 ## Screenshots
 
@@ -43,7 +44,60 @@ product.
 These reference screens use deterministic demo data and contain no provider
 credentials.
 
-## Requirements
+## Deploy the appliance on exe.dev
+
+The release image turns a new exe.dev VM into a self-contained forge. Docker,
+the registry, the web service, and background image builds are started by
+systemd:
+
+```bash
+ssh exe.dev new \
+  --name=image-forge \
+  --cpu=4 \
+  --memory=8GB \
+  --disk=40GB \
+  --image=ghcr.io/hunydev/exe-image-forge:latest
+```
+
+The appliance exposes port 8000, so exe.dev's documented proxy selection makes
+the web available automatically at `https://image-forge.exe.xyz/`. The proxy
+remains private by default.
+
+Retrieve the randomly generated first-boot password over SSH:
+
+```bash
+ssh image-forge.exe.xyz exe-image-forge-first-login
+```
+
+Sign in to the web, open **Admin > CLI Logins**, and authenticate GitHub,
+Codex, Claude, and Gemini. The browser can run only those fixed login commands;
+it is not a host shell. The 16 logged-out base variants build in the background,
+and the web remains available while they build:
+
+```bash
+ssh image-forge.exe.xyz \
+  systemctl status exe-image-forge-bootstrap.service --no-pager
+```
+
+Change the generated password after first sign-in:
+
+```bash
+ssh image-forge.exe.xyz exe-image-forge password
+```
+
+This removes the first-boot plaintext password file. Provider credentials,
+the hashed web password, generated images, and registry data exist only on the
+created VM; none are built into the public GHCR appliance.
+
+Set `--env FORGE_AUTO_BUILD=0` on `ssh exe.dev new` to skip the initial
+background build and run `exe-image-forge build` later. For a private fork of
+the appliance image, add the documented
+`--registry-auth=USERNAME:TOKEN` option.
+
+See the [appliance guide](docs/appliance.md) for boot ordering, storage,
+upgrades, and recovery.
+
+## Source installation requirements
 
 - An Ubuntu-based exe.dev VM
 - Docker with Buildx, Go, Git, Python 3, `curl`, and `sudo`
@@ -55,7 +109,7 @@ Only documented exe.dev interfaces are used. See the official
 [HTTP proxy](https://exe.dev/docs/proxy) and
 [private registry](https://exe.dev/docs/private-image) documentation.
 
-## Quick start
+## Install from source
 
 On the forge VM:
 
@@ -134,9 +188,11 @@ exe-image-forge verify
 ```
 
 The admin page provides the same login flows in a browser terminal and checks
-Codex, Claude, and Gemini credential sizes before baking. `base` images contain
-the tools but no login state. Only the allowlisted credential files are copied
-into `dev` images.
+Codex, Claude, and Gemini credential sizes before baking. Source installations
+run the terminal in the full base image. The release appliance instead runs
+one exact host login command at a time, allowing authentication before the
+background base build finishes. `base` images contain the tools but no login
+state. Only the allowlisted credential files are copied into `dev` images.
 
 ## Image variants
 
@@ -199,6 +255,8 @@ repository. See [`forge.env.example`](forge.env.example). The main settings are:
 | `FORGE_AUTH_HOME` | `/var/lib/exe-image-forge/authhome` | Persistent CLI credentials |
 | `FORGE_REGISTRY_DATA` | `/var/lib/exe-image-forge/registry` | Private registry blob storage |
 | `FORGE_REGISTRY_LOCK` | `/var/lib/exe-image-forge/registry.lock` | Shared grant and GC lock |
+| `FORGE_TERMINAL_MODE` | `container` | Terminal backend; the appliance sets restricted `auth-host` mode |
+| `FORGE_AUTO_BUILD` | `1` in the appliance | Build all base variants after first boot |
 | `FORGE_MIN_FREE_BYTES` | `2147483648` | Minimum free bytes required for builds and grants |
 | `FORGE_MAX_DISK_PERCENT` | `90` | Maximum filesystem usage allowed for builds and grants |
 | `FORGE_BUILD_CACHE_MIN_FREE` | `5gb` | Free-space target used by Buildx cache GC |
@@ -313,6 +371,7 @@ Contributor references:
 - [HTTP and WebSocket API](docs/api.md)
 - [Web UI guide](docs/ui.md)
 - [Operations guide](docs/operations.md)
+- [Appliance deployment guide](docs/appliance.md)
 
 ## License
 

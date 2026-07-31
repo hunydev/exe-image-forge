@@ -43,6 +43,7 @@ elif command -v docker >/dev/null 2>&1; then
   docker run --rm --network host \
     -e PLAYWRIGHT_EXTERNAL_SERVER=1 \
     -e PLAYWRIGHT_BASE_URL="$BASE_URL" \
+    -e UPDATE_SCREENSHOTS="${UPDATE_SCREENSHOTS:-0}" \
     -v "$ROOT:/work" -w /work \
     "$PLAYWRIGHT_IMAGE" \
     /bin/bash -lc 'npm ci --no-audit --no-fund && npx playwright test "$@"' -- "$@"

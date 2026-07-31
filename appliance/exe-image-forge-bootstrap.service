@@ -1,0 +1,22 @@
+[Unit]
+Description=Build initial Exe Image Forge base variants
+Requires=docker.service exe-image-forge-initialize.service exe-image-forge-registry.service
+After=network-online.target docker.service exe-image-forge-initialize.service exe-image-forge-registry.service exe-image-forge-vend.service
+Wants=network-online.target
+ConditionPathExists=!/var/lib/exe-image-forge/bootstrap-complete
+
+[Service]
+Type=oneshot
+User=exedev
+Group=exedev
+SupplementaryGroups=docker
+Environment=HOME=/home/exedev
+EnvironmentFile=/etc/exe-image-forge/forge.env
+ExecStart=/usr/local/libexec/exe-image-forge-bootstrap
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+[Install]
+WantedBy=multi-user.target

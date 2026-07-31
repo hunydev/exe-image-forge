@@ -51,6 +51,12 @@ The browser terminal is a real PTY running in the full
 `base:go-gemini` image with the persistent authentication home mounted. Only
 one terminal may run at a time to prevent credential-file races.
 
+The release appliance uses a second backend, `auth-host`, so login works before
+the initial base images finish building. It starts only the fixed provider
+command selected by the web UI and does not expose a host shell or accept
+browser-supplied arguments. Source installations retain the container-backed
+shell. See the [appliance guide](appliance.md).
+
 | CLI | Command | Flow |
 | --- | --- | --- |
 | GitHub CLI | `gh auth login --git-protocol https` | device code |
@@ -201,6 +207,10 @@ block the others. New binaries are version-checked before replacement, and the
 result is written to `/etc/ai-cli-versions.json`.
 
 ## HTTPS and registry access
+
+The GHCR release appliance exposes port 8000, allowing exe.dev to select it
+automatically from the image metadata. A source installation can select it
+explicitly:
 
 Point the documented exe.dev proxy at the vending service:
 

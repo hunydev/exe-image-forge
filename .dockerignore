@@ -1,0 +1,17 @@
+**
+!appliance/
+!appliance/**
+!deploy/
+!deploy/**
+!image/
+!image/**
+!vend/
+!vend/*.go
+!vend/*.html
+!vend/*.js
+!vend/*.svg
+!vend/go.mod
+!vend/go.sum
+!vend/assets/
+!vend/assets/**
+!exe-image-forge

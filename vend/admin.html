@@ -142,17 +142,17 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
 
     <div class="card">
       <div class="cardhead">
-        <div><h3>Authentication terminal</h3><div class="note">Runs inside the full image with the persistent authentication home mounted.</div></div>
+        <div><h3>Authentication terminal</h3><div class="note" id="termdesc">Runs inside the full image with the persistent authentication home mounted.</div></div>
         <span class="sp"></span><span class="note" id="tstat">Stopped</span>
       </div>
       <div class="row" style="margin-bottom:10px">
         <button class="sec" id="tstart">Start terminal</button>
         <button class="sec" id="tstop" disabled>Stop</button>
         <span class="sp"></span>
-        <button class="sec" data-cmd="gh auth login --git-protocol https" title="Device-code flow">GitHub</button>
-        <button class="sec" data-cmd="codex login --device-auth" title="Device-code flow">Codex</button>
-        <button class="sec" data-cmd="claude auth login" title="Redirect and paste-code flow">Claude</button>
-        <button class="sec" data-cmd="NO_BROWSER=true gemini" title="Redirect and paste-code flow">Gemini</button>
+        <button class="sec" data-tool="gh" data-cmd="gh auth login --git-protocol https" title="Device-code flow">GitHub</button>
+        <button class="sec" data-tool="codex" data-cmd="codex login --device-auth" title="Device-code flow">Codex</button>
+        <button class="sec" data-tool="claude" data-cmd="claude auth login" title="Redirect and paste-code flow">Claude</button>
+        <button class="sec" data-tool="gemini" data-cmd="NO_BROWSER=true gemini" title="Redirect and paste-code flow">Gemini</button>
       </div>
       <div id="termbox"></div>
 
@@ -225,7 +225,7 @@ const {FitAddon}=window.FitAddon;
 
 const $=s=>document.querySelector(s);
 const STATE={ok:'Signed in',stale:'Refresh pending',expired:'Expired',missing:'Not signed in',unknown:'Unknown'};
-let authed=false,authKnown=false,sessionExpires='',sessionRequest=null,term,fit,ws,bakePoll;
+let authed=false,authKnown=false,sessionExpires='',sessionRequest=null,terminalMode='container',term,fit,ws,bakePoll;
 const authChannel='BroadcastChannel' in window?new BroadcastChannel('exe-image-forge-auth'):null;
 
 async function api(path,options){
@@ -304,6 +304,12 @@ async function refreshData(){
   const [data,info]=await Promise.all([api('/api/creds'),api('/api/info')]);
   if(!data.authed){setAuth(false);return}
   $('#demobadge').classList.toggle('hide',!info.demo);
+  terminalMode=data.terminal_mode||'container';
+  const restricted=terminalMode==='auth-host';
+  $('#tstart').classList.toggle('hide',restricted);
+  $('#termdesc').textContent=restricted
+    ? 'Runs one selected login CLI on the host. Arbitrary shell commands are disabled.'
+    : 'Runs inside the full image with the persistent authentication home mounted.';
 
   const baked=data.baked?new Date(data.baked):null;
   $('#bakedat').textContent=baked?baked.toLocaleString():'Never';
@@ -346,7 +352,7 @@ async function refreshData(){
       <td><span class="pill s-${esc(credential.state)}">${esc(STATE[credential.state]||credential.state)}</span></td>
       <td class="note">${credential.expires?esc(fmtLeft(credential.seconds_left)):'—'}</td>
       <td class="note">${esc(credential.detail||'—')}</td>
-      <td><button class="sec" data-cmd="${command}" data-reauth="${credential.state==='ok'}">${credential.state==='ok'?'Sign in again':'Sign in'}</button></td>
+      <td><button class="sec" data-tool="${esc(credential.tool)}" data-cmd="${command}" data-reauth="${credential.state==='ok'}">${credential.state==='ok'?'Sign in again':'Sign in'}</button></td>
     </tr>`}).join('');
 
   await Promise.all([pkList(),loadCtx()]);
@@ -386,12 +392,14 @@ function ensureTerm(){
   addEventListener('resize',()=>{fit.fit();sendSize()});
 }
 function sendSize(){if(ws&&ws.readyState===1)ws.send('\x00'+JSON.stringify({cols:term.cols,rows:term.rows}))}
-function startTerm(){
+function startTerm(tool=''){
   switchTab('logins');ensureTerm();
   if(ws&&ws.readyState<=1)return;
+  if(terminalMode==='auth-host'&&!tool){$('#tstat').textContent='Select a login provider';return}
   const url=new URL('/admin/api/term',location.href);
   url.protocol=location.protocol==='https:'?'wss:':'ws:';
   url.searchParams.set('cols',term.cols);url.searchParams.set('rows',term.rows);
+  if(terminalMode==='auth-host')url.searchParams.set('tool',tool);
   ws=new WebSocket(url);ws.binaryType='arraybuffer';$('#tstat').textContent='Connecting…';
   ws.onopen=()=>{$('#tstat').textContent='Connected';$('#tstop').disabled=false;$('#tstart').disabled=true;sendSize();term.focus()};
   ws.onmessage=event=>term.write(typeof event.data==='string'?event.data:new Uint8Array(event.data));
@@ -399,18 +407,23 @@ function startTerm(){
   ws.onerror=()=>{$('#tstat').textContent='Connection failed'};
   if(!startTerm.bound){startTerm.bound=true;term.onData(data=>{if(ws&&ws.readyState===1)ws.send(data)})}
 }
-function runCmd(command){
+function runCmd(command,tool){
   const clean=command.split('#')[0].trim();
   switchTab('logins');
-  if(!ws||ws.readyState!==1){startTerm();setTimeout(()=>runCmd(command),1400);return}
+  if(!ws||ws.readyState!==1){
+    startTerm(tool);
+    if(terminalMode!=='auth-host')setTimeout(()=>runCmd(command,tool),1400);
+    return
+  }
+  if(terminalMode==='auth-host')return;
   $('#termbox').scrollIntoView({behavior:'smooth',block:'center'});ws.send(clean+'\n');term.focus();
 }
-$('#tstart').onclick=startTerm;
+$('#tstart').onclick=()=>startTerm();
 $('#tstop').onclick=()=>ws&&ws.close();
 document.addEventListener('click',event=>{
   const target=event.target.closest('[data-cmd]');if(!target)return;
   if(target.dataset.reauth==='true'&&!confirm('This credential already works. Signing in again may invalidate it. Continue?'))return;
-  runCmd(target.dataset.cmd);
+  runCmd(target.dataset.cmd,target.dataset.tool);
 });
 
 // ---- Gemini callback relay ----

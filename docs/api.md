@@ -168,6 +168,7 @@ Authenticated responses add credential details and tool versions:
   "authed_home": "/var/lib/exe-image-forge/authhome",
   "passkeys": 0,
   "passkeys_total": 0,
+  "terminal_mode": "auth-host",
   "versions": {
     "codex": "0.110.0",
     "updated": "2026-01-15T12:00:00Z"
@@ -178,6 +179,13 @@ Authenticated responses add credential details and tool versions:
 Credential `state` is one of `missing`, `ok`, `stale`, `expired`, or
 `unknown`. Account names, credential paths, and login commands must never be
 added to the unauthenticated form.
+
+`terminal_mode` is returned only to an authenticated session:
+
+- `container` opens the full generated image and accepts terminal input.
+- `auth-host` requires a `tool` selector and starts an exact allowlisted login
+  command on the appliance host. It never interprets browser input as a shell
+  command.
 
 ## Image grants
 
@@ -237,6 +245,28 @@ Read-only registry proxy for a single grant.
 - Authorization headers from callers are removed before proxying.
 - The unscoped `/v2/` ping returns the Docker Registry API version and no
   protected data.
+
+## Authentication terminal
+
+### `GET /admin/api/term`
+
+Requires an active session and upgrades to a WebSocket. `cols` and `rows`
+provide the initial PTY size.
+
+In `auth-host` mode, `tool` is required and must be one of `gh`, `codex`,
+`claude`, or `gemini`. A missing or unknown value returns `400` before a
+WebSocket is accepted. The value selects a server-side fixed command; it is not
+an executable name or shell fragment.
+
+Text or binary frames after connection are PTY input. A text frame beginning
+with a NUL byte contains a JSON resize control:
+
+```json
+{
+  "cols": 120,
+  "rows": 32
+}
+```
 
 ## Protected administration endpoints
 

@@ -182,7 +182,7 @@ func (a *admin) handleCreds(w http.ResponseWriter, r *http.Request) {
 			"creds": creds, "warnings": summarize(creds), "authed": true,
 			"baked": a.srv.bakedAt(), "authed_home": a.srv.cfg.AuthHome,
 			"passkeys": a.passkeyCountFor(r), "passkeys_total": a.pk.count(),
-			"versions": a.srv.toolVersions(),
+			"versions": a.srv.toolVersions(), "terminal_mode": a.srv.terminalMode,
 		})
 		return
 	}
@@ -283,16 +283,74 @@ func (a *admin) handleBakeStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleTerm bridges a websocket to a PTY running a shell inside the base
-// image, with the persistent auth home mounted. This is how OAuth logins get
-// done from a browser.
+type hostAuthSpec struct {
+	command string
+	args    []string
+	env     []string
+}
+
+// hostAuthCommand maps an opaque UI tool name to one exact login command. It
+// deliberately does not accept a shell command from the browser.
+func hostAuthCommand(tool string) (hostAuthSpec, bool) {
+	switch tool {
+	case "gh":
+		return hostAuthSpec{command: "gh", args: []string{"auth", "login", "--git-protocol", "https"}}, true
+	case "codex":
+		return hostAuthSpec{command: "codex", args: []string{"login", "--device-auth"}}, true
+	case "claude":
+		return hostAuthSpec{command: "claude", args: []string{"auth", "login"}}, true
+	case "gemini":
+		return hostAuthSpec{command: "gemini", env: []string{"NO_BROWSER=true"}}, true
+	default:
+		return hostAuthSpec{}, false
+	}
+}
+
+func authTerminalEnv(home string, extra []string) []string {
+	drop := []string{"HOME=", "XDG_CONFIG_HOME=", "TERM=", "LANG=", "USER=", "LOGNAME="}
+	env := make([]string, 0, len(os.Environ())+len(extra)+5)
+	for _, entry := range os.Environ() {
+		keep := true
+		for _, prefix := range drop {
+			if strings.HasPrefix(entry, prefix) {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			env = append(env, entry)
+		}
+	}
+	env = append(env,
+		"HOME="+home,
+		"XDG_CONFIG_HOME="+home+"/.config",
+		"TERM=xterm-256color",
+		"LANG=en_US.UTF-8",
+		"USER=exedev",
+		"LOGNAME=exedev",
+	)
+	return append(env, extra...)
+}
+
+// handleTerm bridges a websocket to a PTY. Normal installations use a shell
+// inside the full base image. A self-hosted appliance uses auth-host mode,
+// which works before the base images exist and permits only fixed login CLIs.
 func (a *admin) handleTerm(w http.ResponseWriter, r *http.Request) {
 	if a.srv.demo {
 		a.handleDemoTerm(w, r)
 		return
 	}
-	// One terminal at a time. Concurrent shells would race on the same auth
-	// home, and each holds a container.
+	var spec hostAuthSpec
+	if a.srv.terminalMode == "auth-host" {
+		var ok bool
+		spec, ok = hostAuthCommand(r.URL.Query().Get("tool"))
+		if !ok {
+			http.Error(w, "unknown or missing authentication tool", http.StatusBadRequest)
+			return
+		}
+	}
+	// One terminal at a time. Concurrent login processes would race on the same
+	// authentication home.
 	a.mu.Lock()
 	busy := a.termBusy
 	if !busy {
@@ -327,19 +385,32 @@ func (a *admin) handleTerm(w http.ResponseWriter, r *http.Request) {
 		rows = v
 	}
 
-	name := "image-forge-term-" + randHex(4)
-	args := []string{
-		"run", "--rm", "-i", "-t", "--name", name,
-		"--network", "host", "--pull", "never",
-		"-e", "HOME=/home/exedev", "-e", "TERM=xterm-256color",
-		"-e", "LANG=en_US.UTF-8",
-		"-u", "1000:1000",
-		"-v", a.srv.cfg.AuthHome + ":/home/exedev",
-		"-w", "/home/exedev",
-		a.srv.termImage(),
-		"bash", "-l",
+	containerName := ""
+	cleanup := func() {}
+	var cmd *exec.Cmd
+	if a.srv.terminalMode == "auth-host" {
+		cmd = exec.Command(spec.command, spec.args...)
+		cmd.Dir = a.srv.cfg.AuthHome
+		cmd.Env = authTerminalEnv(a.srv.cfg.AuthHome, spec.env)
+	} else {
+		containerName = "image-forge-term-" + randHex(4)
+		args := []string{
+			"run", "--rm", "-i", "-t", "--name", containerName,
+			"--network", "host", "--pull", "never",
+			"-e", "HOME=/home/exedev", "-e", "TERM=xterm-256color",
+			"-e", "LANG=en_US.UTF-8",
+			"-u", "1000:1000",
+			"-v", a.srv.cfg.AuthHome + ":/home/exedev",
+			"-w", "/home/exedev",
+			a.srv.termImage(),
+			"bash", "-l",
+		}
+		cmd = exec.Command("docker", args...)
+		cleanup = func() {
+			// The container holds the pty; stop it so --rm cleans up.
+			exec.Command("docker", "rm", "-f", containerName).Run()
+		}
 	}
-	cmd := exec.Command("docker", args...)
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		c.Write(r.Context(), websocket.MessageText, []byte("pty start failed: "+err.Error()+"\r\n"))
@@ -350,8 +421,10 @@ func (a *admin) handleTerm(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	defer func() {
 		f.Close()
-		// The container holds the pty; stop it so 'docker run --rm' cleans up.
-		exec.Command("docker", "rm", "-f", name).Run()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		cleanup()
 		cmd.Wait()
 	}()
 

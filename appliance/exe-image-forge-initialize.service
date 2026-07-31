@@ -1,0 +1,12 @@
+[Unit]
+Description=Initialize Exe Image Forge appliance state
+Before=exe-image-forge-registry.service exe-image-forge-vend.service exe-image-forge-bootstrap.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/exe-image-forge-initialize
+RemainAfterExit=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

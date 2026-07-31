@@ -1,0 +1,82 @@
+name: Release appliance
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: appliance-${{ github.event.release.tag_name || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/exe-image-forge
+
+jobs:
+  publish:
+    name: Publish bootable exe.dev image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select validation or release metadata
+        id: mode
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_LATEST: ${{ !github.event.release.prerelease }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" = release ]]; then
+            {
+              echo "tag=$RELEASE_TAG"
+              echo "push=true"
+              echo "latest=$RELEASE_LATEST"
+            } >>"$GITHUB_OUTPUT"
+          else
+            {
+              echo "tag=validation-${GITHUB_SHA::12}"
+              echo "push=false"
+              echo "latest=false"
+            } >>"$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-qemu-action@v4.2.0
+      - uses: docker/setup-buildx-action@v4.2.0
+      - uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v6.2.0
+        id: metadata
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ steps.mode.outputs.tag }}
+            type=raw,value=latest,enable=${{ steps.mode.outputs.latest }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.mode.outputs.tag }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      - uses: docker/build-push-action@v7.3.0
+        id: build
+        with:
+          context: .
+          file: appliance/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ steps.mode.outputs.push }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+      - name: Publish image digest in the workflow summary
+        run: |
+          {
+            echo "### Exe Image Forge appliance"
+            echo
+            echo "\`${IMAGE}@${DIGEST}\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}

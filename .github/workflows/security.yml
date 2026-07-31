@@ -74,9 +74,20 @@ jobs:
           image/files/write-agent-context
           image/files/write-versions
           image/files/init-wrapper.sh
+          appliance/initialize.sh
+          appliance/start-registry.sh
+          appliance/bootstrap.sh
+          appliance/first-login.sh
+          appliance/motd.sh
+          scripts/test-appliance.sh
       - uses: hadolint/hadolint-action@v3.4.0
         with:
           dockerfile: image/Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: warning
+      - uses: hadolint/hadolint-action@v3.4.0
+        with:
+          dockerfile: appliance/Dockerfile
           config: .hadolint.yaml
           failure-threshold: warning
 
