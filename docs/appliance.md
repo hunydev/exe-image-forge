@@ -139,5 +139,11 @@ Linux AMD64 and ARM64 images, pushes the release tag and (for a non-prerelease)
 `latest`, attaches SBOM and provenance attestations, and records the immutable
 manifest digest in the workflow summary.
 
+After a successful release, `.github/workflows/appliance-smoke.yml` pulls the
+public image and boots it as a privileged PID 1/systemd container. The smoke
+test checks first-boot initialization, Docker-backed registry startup, port
+8000 health, restricted authentication mode, and the absence of protected
+credential metadata from unauthenticated responses.
+
 The appliance is based on a pinned multi-platform exeuntu manifest. Updating
 that digest should be reviewed like any other operating-system dependency.

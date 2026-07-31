@@ -37,6 +37,9 @@ Pushes, pull requests, and a weekly schedule run:
 Release images are built for AMD64 and ARM64 with SBOM and provenance
 attestations. Credentialed `dev` images are local products of a running forge
 and must never be published by the release workflow.
+Every successful release also boots the published systemd image in a privileged
+smoke-test container and verifies the first-boot secret boundary before the
+release is considered operationally complete.
 
 GitHub secret scanning and push protection should remain enabled. Dependabot
 tracks Go, npm, Docker, and GitHub Actions dependencies.

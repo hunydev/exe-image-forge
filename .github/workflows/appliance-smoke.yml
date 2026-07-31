@@ -1,0 +1,93 @@
+name: Appliance boot smoke test
+
+on:
+  workflow_run:
+    workflows: ["Release appliance"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  boot:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'release')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Pull the public appliance
+        run: docker pull ghcr.io/hunydev/exe-image-forge:latest
+
+      - name: Boot systemd appliance
+        run: |
+          docker run --detach \
+            --name exe-image-forge-smoke \
+            --hostname forge-smoke \
+            --privileged \
+            --cgroupns=host \
+            --env FORGE_AUTO_BUILD=0 \
+            --publish 127.0.0.1:18000:8000 \
+            ghcr.io/hunydev/exe-image-forge:latest
+
+      - name: Verify first boot and web readiness
+        run: |
+          for _ in $(seq 1 180); do
+            if curl --fail --silent http://127.0.0.1:18000/healthz >/dev/null; then
+              break
+            fi
+            if [[ "$(docker inspect -f '{{.State.Running}}' exe-image-forge-smoke)" != true ]]; then
+              docker logs exe-image-forge-smoke
+              exit 1
+            fi
+            sleep 1
+          done
+
+          curl --fail --silent http://127.0.0.1:18000/healthz | grep -Fx ok
+          docker exec exe-image-forge-smoke \
+            systemctl is-active --quiet exe-image-forge-initialize.service
+          docker exec exe-image-forge-smoke \
+            systemctl is-active --quiet exe-image-forge-vend.service
+
+          for _ in $(seq 1 180); do
+            if docker exec exe-image-forge-smoke \
+              systemctl is-active --quiet exe-image-forge-registry.service; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec exe-image-forge-smoke \
+            systemctl is-active --quiet exe-image-forge-registry.service
+          docker exec exe-image-forge-smoke \
+            docker container inspect exe-image-forge-registry >/dev/null
+
+          password_mode=$(docker exec exe-image-forge-smoke stat -c '%a' \
+            /var/lib/exe-image-forge/initial-password)
+          [[ "$password_mode" = 600 ]]
+          docker exec exe-image-forge-smoke grep -Fx \
+            'FORGE_TERMINAL_MODE="auth-host"' \
+            /etc/exe-image-forge/forge.env
+          docker exec exe-image-forge-smoke jq -e \
+            '.pull_host == "forge-smoke.exe.xyz" and
+             (.salt | length) == 32 and
+             (.hash | length) == 64' \
+            /etc/exe-image-forge/config.json >/dev/null
+          curl --fail --silent http://127.0.0.1:18000/api/creds |
+            jq -e '.authed == false and (has("terminal_mode") | not)' >/dev/null
+
+      - name: Show service logs on failure
+        if: failure()
+        run: |
+          docker logs exe-image-forge-smoke || true
+          docker exec exe-image-forge-smoke \
+            systemctl --failed --no-pager || true
+          docker exec exe-image-forge-smoke \
+            journalctl -u exe-image-forge-vend.service \
+              -u exe-image-forge-registry.service --no-pager || true
+
+      - name: Remove smoke-test container
+        if: always()
+        run: docker rm --force exe-image-forge-smoke >/dev/null 2>&1 || true
