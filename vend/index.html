@@ -1,18 +1,21 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>Exe Image Forge</title>
 <style>
-:root{color-scheme:dark;--bg:#0d1117;--fg:#e6edf3;--mut:#8b949e;--card:#161b22;--line:#30363d;--acc:#2f81f7;--ok:#3fb950}
+:root{color-scheme:dark;--bg:#0d1117;--fg:#e6edf3;--mut:#8b949e;--card:#161b22;--line:#30363d;--acc:#2f81f7;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans KR",sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
-.wrap{width:100%;max-width:760px}
-h1{font-size:22px;margin:0 0 4px}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+.wrap{width:100%;max-width:780px}
+h1{font-size:22px;margin:0}
+h2{font-size:16px;margin:0 0 4px}
 p.sub{color:var(--mut);margin:0 0 20px;font-size:13px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px}
+.cardhead{display:flex;align-items:flex-start;gap:12px;margin-bottom:18px}
+.cardhead .sp{flex:1}
 label{display:block;font-size:12px;color:var(--mut);margin:0 0 6px;text-transform:uppercase;letter-spacing:.04em}
 input,select{width:100%;background:#0d1117;border:1px solid var(--line);border-radius:8px;color:var(--fg);padding:10px 12px;font:inherit}
 input:focus,select:focus{outline:none;border-color:var(--acc)}
@@ -20,18 +23,21 @@ input:focus,select:focus{outline:none;border-color:var(--acc)}
 .row>div{flex:1;min-width:150px}
 button{margin-top:16px;width:100%;background:var(--acc);border:0;border-radius:8px;color:#fff;font:600 15px/1 inherit;padding:12px;cursor:pointer}
 button:disabled{opacity:.6;cursor:default}
+button.sec{width:auto;margin:0;background:transparent;border:1px solid var(--line);color:var(--fg);padding:8px 12px;font-size:12px}
+button.sec:hover{border-color:var(--acc)}
 pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0}
 .f{margin-bottom:14px}
 .f .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 .cp{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer;width:auto;margin:0}
 .cp:hover{color:var(--fg);border-color:var(--acc)}
-.err{color:#f85149;font-size:13px;margin-top:12px}
+.err{color:var(--bad);font-size:13px;margin-top:12px}
 .exp{color:var(--ok);font-size:13px;font-weight:600}
 .hide{display:none !important}
 .banner{border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13.5px}
 .banner b{display:block;margin-bottom:3px}
 .b-warn{background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.4)}
 .b-bad{background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.4)}
+.b-ok{background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.35)}
 .banner a{color:var(--acc);font-weight:600}
 .topbar{display:flex;align-items:baseline;gap:12px;margin-bottom:4px}
 .topbar .sp{flex:1}
@@ -39,177 +45,240 @@ pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12
 .topbar a:hover{color:var(--acc)}
 .pkbtn{margin-top:0;background:transparent;border:1px solid var(--acc);color:var(--acc)}
 .pkbtn:hover{background:var(--acc);color:#fff}
-.sepwrap{display:flex;align-items:center;gap:10px;margin:16px 0 4px;color:var(--mut);font-size:12px}
+.sepwrap{display:flex;align-items:center;gap:10px;margin:16px 0;color:var(--mut);font-size:12px}
 .sepwrap::before,.sepwrap::after{content:"";flex:1;height:1px;background:var(--line)}
-.pkok{margin-top:12px;padding:10px 12px;border-radius:8px;font-size:13px;
-  background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.35);color:#7ee787}
-.ck{display:flex;align-items:center;gap:9px;margin:7px 0;cursor:pointer;font-size:14px;
-  color:var(--fg);text-transform:none;letter-spacing:normal}
+.ck{display:flex;align-items:center;gap:9px;margin:7px 0;cursor:pointer;font-size:14px;color:var(--fg);text-transform:none;letter-spacing:normal}
 .ck input{width:16px;height:16px;accent-color:var(--acc);margin:0;cursor:pointer}
 .ck em{color:var(--mut);font-style:normal;font-size:12px;margin-left:7px}
-.szline{margin-top:10px;font-size:12px;color:var(--mut)}
+.szline,.note{font-size:12px;color:var(--mut)}
+.szline{margin-top:10px}
 .szline b{color:var(--fg);font-weight:600}
+.session{font-size:12px;color:var(--ok);white-space:nowrap;padding-top:3px}
 kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="topbar"><h1>Exe Image Forge</h1><span class="sp"></span><a href="/admin/">관리 페이지 →</a></div>
-  <p class="sub">비밀번호를 입력하면 지정 시간 동안만 유효한 이미지 경로가 발급됩니다.</p>
+  <div class="topbar"><h1>Exe Image Forge</h1><span class="sp"></span><a href="/admin/">Open admin →</a></div>
+  <p class="sub">Create a short-lived image path for an exe.dev VM or Docker pull.</p>
 
-  <div id="banners"></div>
+  <div id="notice"></div>
 
-  <div class="card" id="login">
-    <div id="pkbox" class="hide">
-      <button id="pklogin" class="pkbtn">🔑 패스키로 로그인</button>
-      <div class="pkok hide" id="pkok">패스키로 인증됨 — 암호 없이 발급할 수 있습니다</div>
-      <div class="sepwrap"><span>또는 암호 사용</span></div>
+  <div class="card" id="authgate">
+    <div class="cardhead">
+      <div><h2>Sign in</h2><div class="note">Image selection and grant controls appear after authentication.</div></div>
     </div>
-    <div class="f" id="pwbox">
+    <button id="pklogin" class="pkbtn hide">🔑 Sign in with a passkey</button>
+    <div class="sepwrap hide" id="pksep"><span>or use a password</span></div>
+    <div class="f">
       <label for="pw">Password</label>
       <input id="pw" type="password" autocomplete="current-password" autofocus>
     </div>
-    <div class="row">
-      <div><label for="repo">Image</label><select id="repo"></select>
-        <div class="note" id="reponote" style="margin-top:6px"></div></div>
-      <div><label for="ttl">TTL (분)</label><input id="ttl" type="number" min="1" max="1440" value="30"></div>
-    </div>
-    <div class="f">
-      <label>구성요소</label>
-      <div class="szline" style="margin:0 0 6px">gh · node · python · uv 는 항상 포함됩니다. 큰 도구는 필요에 맞게 선택하세요.</div>
-      <label class="ck"><input type="checkbox" id="c-codex" checked>
-        <span>Codex CLI<em id="sz-codex"></em></span></label>
-      <label class="ck"><input type="checkbox" id="c-claude" checked>
-        <span>Claude Code<em id="sz-claude"></em></span></label>
-      <label class="ck"><input type="checkbox" id="c-gemini">
-        <span>Gemini CLI<em id="sz-gemini"></em></span></label>
-      <label class="ck"><input type="checkbox" id="c-go">
-        <span>Go 툴체인<em id="sz-go"></em></span></label>
-      <div class="szline">선택한 구성: <b id="vname">min</b> · 다운로드 약 <b id="vsize">-</b></div>
-      <div class="err hide" id="verr"></div>
-    </div>
-    <button id="go">이미지 경로 발급</button>
-    <div class="err hide" id="err"></div>
+    <button id="signin">Sign in</button>
+    <div class="err hide" id="autherr"></div>
   </div>
 
-  <div class="card hide" id="out">
-    <div class="f"><div class="hd"><label>구성</label><span class="exp" id="vout"></span></div></div>
-    <div class="f"><div class="hd"><label>만료</label><span class="exp" id="exp"></span></div></div>
-    <div class="f"><div class="hd"><label>exe.dev 로 VM 생성</label><button class="cp" data-c="exe">copy</button></div><pre id="exe"></pre></div>
-    <div class="f"><div class="hd"><label>docker pull</label><button class="cp" data-c="dk">copy</button></div><pre id="dk"></pre></div>
-    <div class="f"><div class="hd"><label>image ref</label><button class="cp" data-c="raw">copy</button></div><pre id="raw"></pre></div>
-    <p class="sub" style="margin:0">만료 후 태그와 토큰 경로가 모두 삭제됩니다. 다시 필요하면 <kbd>재발급</kbd>하세요.</p>
+  <div id="grantapp" class="hide">
+    <div id="banners"></div>
+    <div class="card">
+      <div class="cardhead">
+        <div><h2>New image grant</h2><div class="note">Choose only the tools this VM needs.</div></div>
+        <span class="sp"></span>
+        <div><div class="session" id="sessionstatus">Signed in</div><button class="sec" id="logout">Sign out</button></div>
+      </div>
+      <div class="row">
+        <div><label for="repo">Image</label><select id="repo"></select>
+          <div class="note" id="reponote" style="margin-top:6px"></div></div>
+        <div><label for="ttl">TTL (minutes)</label><input id="ttl" type="number" min="1" max="1440" value="30"></div>
+      </div>
+      <div class="f" style="margin-top:16px">
+        <label>Components</label>
+        <div class="szline" style="margin:0 0 6px">GitHub CLI, Node.js, Python, and uv are always included.</div>
+        <label class="ck"><input type="checkbox" id="c-codex" checked>
+          <span>Codex CLI<em id="sz-codex"></em></span></label>
+        <label class="ck"><input type="checkbox" id="c-claude" checked>
+          <span>Claude Code<em id="sz-claude"></em></span></label>
+        <label class="ck"><input type="checkbox" id="c-gemini">
+          <span>Gemini CLI<em id="sz-gemini"></em></span></label>
+        <label class="ck"><input type="checkbox" id="c-go">
+          <span>Go toolchain<em id="sz-go"></em></span></label>
+        <div class="szline">Selected variant: <b id="vname">min</b> · approximate download: <b id="vsize">-</b></div>
+        <div class="err hide" id="verr"></div>
+      </div>
+      <button id="go">Issue image path</button>
+      <div class="err hide" id="err"></div>
+    </div>
+
+    <div class="card hide" id="out">
+      <div class="f"><div class="hd"><label>Variant</label><span class="exp" id="vout"></span></div></div>
+      <div class="f"><div class="hd"><label>Expires</label><span class="exp" id="exp"></span></div></div>
+      <div class="f"><div class="hd"><label>Create an exe.dev VM</label><button class="cp" data-c="exe">copy</button></div><pre id="exe"></pre></div>
+      <div class="f"><div class="hd"><label>Docker pull</label><button class="cp" data-c="dk">copy</button></div><pre id="dk"></pre></div>
+      <div class="f"><div class="hd"><label>Image reference</label><button class="cp" data-c="raw">copy</button></div><pre id="raw"></pre></div>
+      <p class="sub" style="margin:0">The tag and token path are removed at expiry. Issue a new grant when needed.</p>
+    </div>
   </div>
 </div>
 <script src="/passkey.js"></script>
 <script>
 const $=s=>document.querySelector(s);
-fetch('/api/info').then(r=>r.json()).then(d=>{
-  $('#repo').innerHTML=d.repos.map(r=>
-    `<option value="${r.name}" data-note="${r.note}">${r.label}</option>`).join('');
-  const showNote=()=>{const o=$('#repo').selectedOptions[0];
-    $('#reponote').textContent=o?o.dataset.note:''};
-  $('#repo').onchange=showNote; showNote();
+let VARIANTS={}, authed=false, authKnown=false, sessionExpires='', sessionRequest=null;
+const authChannel='BroadcastChannel' in window?new BroadcastChannel('exe-image-forge-auth'):null;
+
+async function api(path,options){
+  const r=await fetch(path,{cache:'no-store',...options});
+  if(!r.ok){const e=new Error((await r.text()).trim()||`Request failed (${r.status})`);e.status=r.status;throw e}
+  const text=await r.text();
+  return text?JSON.parse(text):{};
+}
+
+function notice(message,type='bad'){
+  $('#notice').innerHTML=message?`<div class="banner b-${type}">${message}</div>`:'';
+}
+
+function setAuth(next,reason=''){
+  const wasAuthed=authed;
+  authed=next; authKnown=true;
+  $('#authgate').classList.toggle('hide',next);
+  $('#grantapp').classList.toggle('hide',!next);
+  if(next){
+    notice('');
+    loadCredentialWarnings();
+  }else{
+    $('#out').classList.add('hide');
+    $('#banners').innerHTML='';
+    if(reason)notice(reason,'bad');
+    else if(wasAuthed)notice('Your session ended. Sign in again to continue.','bad');
+    setTimeout(()=>$('#pw').focus(),0);
+  }
+}
+
+function updateSessionLabel(){
+  if(!authed)return;
+  const end=sessionExpires?new Date(sessionExpires):null;
+  $('#sessionstatus').textContent=end&&!isNaN(end)?`Signed in · expires ${end.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`:'Signed in';
+}
+
+async function checkSession(){
+  if(sessionRequest)return sessionRequest;
+  sessionRequest=(async()=>{
+    const d=await api('/api/session');
+    sessionExpires=d.expires||'';
+    $('#pklogin').classList.toggle('hide',!(d.passkeys>0&&pkSupported()));
+    $('#pksep').classList.toggle('hide',!(d.passkeys>0&&pkSupported()));
+    setAuth(!!d.authed);
+    updateSessionLabel();
+    return !!d.authed;
+  })();
+  try{return await sessionRequest}finally{sessionRequest=null}
+}
+
+async function loadInfo(){
+  const d=await api('/api/info');
+  $('#repo').innerHTML=d.repos.map(r=>`<option value="${r.name}" data-note="${r.note}">${r.label}</option>`).join('');
+  const showNote=()=>{const o=$('#repo').selectedOptions[0];$('#reponote').textContent=o?o.dataset.note:''};
+  $('#repo').onchange=showNote;showNote();
   if(d.ttl_minutes)$('#ttl').value=d.ttl_minutes;
   VARIANTS=d.variants||{};
-  // Show what each toggle actually costs, so the choice is informed.
   const delta=(a,b)=>{const x=VARIANTS[a],y=VARIANTS[b];
-    return (x&&y&&x.bytes&&y.bytes)?`+${Math.round((y.bytes-x.bytes)/1048576)}MB`:''};
+    return x&&y&&x.bytes&&y.bytes?`+${Math.round((y.bytes-x.bytes)/1048576)}MB`:''};
   $('#sz-codex').textContent=delta('claude','min');
   $('#sz-claude').textContent=delta('codex','min');
   $('#sz-gemini').textContent=delta('min','gemini');
   $('#sz-go').textContent=delta('min','go');
   updateVariant();
-}).catch(()=>{});
+}
 
-// Warn about credential problems before an image path is handed out, so a
-// stale image is not shipped to a fresh VM unnoticed.
-fetch('/api/creds').then(r=>r.json()).then(d=>{
-  if(d.authed){pkShowAuthed();$('#pkbox').classList.remove('hide')}
-  else if(d.passkeys>0&&pkSupported()){$('#pkbox').classList.remove('hide')}
-  const w=d.warnings||[]; if(!w.length)return;
-  const c=d.counts||{}, severe=(c.missing||0)+(c.expired||0)+(c.unknown||0);
-  $('#banners').innerHTML=`<div class="banner ${severe?'b-bad':'b-warn'}">
-    <b>${severe?'구워진 이미지의 자격증명에 문제가 있습니다':'참고'}</b>
-    ${w.map(x=>`<div>${x}</div>`).join('')}
-    ${severe?'<div style="margin-top:8px"><a href="/admin/">관리 페이지에서 로그인하고 다시 bake →</a></div>':''}
-  </div>`;
-}).catch(()=>{});
-async function grant(){
-  const b=$('#go');b.disabled=true;b.textContent='발급 중...';$('#err').classList.add('hide');
+async function loadCredentialWarnings(){
+  if(!authed)return;
   try{
-    const r=await fetch('/api/grant',{method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({password:$('#pw').value,repo:$('#repo').value,ttl:+$('#ttl').value,
+    const d=await api('/api/creds');
+    if(!d.authed){setAuth(false);return}
+    const warnings=d.warnings||[];
+    if(!warnings.length){$('#banners').innerHTML='';return}
+    const bad=(d.creds||[]).some(c=>['missing','expired','unknown'].includes(c.state));
+    $('#banners').innerHTML=`<div class="banner ${bad?'b-bad':'b-warn'}">
+      <b>${bad?'Credential action required':'Credential note'}</b>
+      ${warnings.map(x=>`<div>${x}</div>`).join('')}
+      ${bad?'<div style="margin-top:8px"><a href="/admin/#logins">Open CLI Logins, sign in, then bake →</a></div>':''}
+    </div>`;
+  }catch(e){if(e.status===401)setAuth(false)}
+}
+
+async function signIn(){
+  const button=$('#signin');
+  button.disabled=true;button.textContent='Signing in…';$('#autherr').classList.add('hide');
+  try{
+    await api('/admin/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:$('#pw').value})});
+    $('#pw').value='';await checkSession();authChannel?.postMessage('changed');
+  }catch(e){$('#autherr').textContent=e.message;$('#autherr').classList.remove('hide')}
+  finally{button.disabled=false;button.textContent='Sign in'}
+}
+
+async function passkeySignIn(){
+  const button=$('#pklogin');
+  button.disabled=true;$('#autherr').classList.add('hide');
+  try{await pkLoginCeremony();await checkSession();authChannel?.postMessage('changed')}
+  catch(e){$('#autherr').textContent=pkError(e);$('#autherr').classList.remove('hide')}
+  finally{button.disabled=false}
+}
+
+async function signOut(){
+  await fetch('/admin/api/logout',{method:'POST'});
+  sessionExpires='';setAuth(false,'You have signed out.');authChannel?.postMessage('changed');
+}
+
+async function grant(){
+  const button=$('#go');
+  button.disabled=true;button.textContent='Issuing…';$('#err').classList.add('hide');
+  try{
+    const d=await api('/api/grant',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({repo:$('#repo').value,ttl:+$('#ttl').value,
         with_codex:$('#c-codex').checked,with_claude:$('#c-claude').checked,
         with_go:$('#c-go').checked,with_gemini:$('#c-gemini').checked})});
-    if(!r.ok)throw new Error(await r.text());
-    const d=await r.json();
-    $('#exe').textContent=d.exe_cmd;
-    $('#dk').textContent=d.docker_cmd;
-    $('#raw').textContent=d.image;
-    $('#exp').textContent=new Date(d.expires).toLocaleString()+`  (${d.ttl_minutes}분)`;
+    $('#exe').textContent=d.exe_cmd;$('#dk').textContent=d.docker_cmd;$('#raw').textContent=d.image;
+    $('#exp').textContent=new Date(d.expires).toLocaleString()+` (${d.ttl_minutes} minutes)`;
     $('#vout').textContent=d.variant+(VARIANTS[d.variant]?.size?` · ${VARIANTS[d.variant].size}`:'');
-    $('#out').classList.remove('hide');
-    b.textContent='재발급';
+    $('#out').classList.remove('hide');button.textContent='Issue another path';
   }catch(e){
-    $('#err').textContent=String(e.message||e).trim();$('#err').classList.remove('hide');
-    b.textContent='이미지 경로 발급';
-  }finally{b.disabled=false}
+    if(e.status===401||e.status===403){await checkSession().catch(()=>{});if(!authed)return}
+    $('#err').textContent=e.message;$('#err').classList.remove('hide');button.textContent='Issue image path';
+  }finally{button.disabled=false}
 }
-// ---- variant picker ----
-// Codex and Claude default on for backward compatibility. Every large component
-// can still be omitted, and the names below match the Go server exactly.
-let VARIANTS={};
+
 function variantName(){
-  const c=$('#c-codex').checked, l=$('#c-claude').checked;
-  const g=$('#c-go').checked, m=$('#c-gemini').checked;
+  const c=$('#c-codex').checked,l=$('#c-claude').checked,g=$('#c-go').checked,m=$('#c-gemini').checked;
   const prefix=c&&l?'':c?'codex':l?'claude':'core';
   const suffix=g&&m?'go-gemini':g?'go':m?'gemini':'';
   if(!prefix)return suffix||'min';
   return suffix?`${prefix}-${suffix}`:prefix;
 }
 function updateVariant(){
-  const v=variantName();
-  $('#vname').textContent=v;
-  const info=VARIANTS[v];
-  $('#vsize').textContent=info&&info.size?info.size:'-';
-  // Warn rather than silently failing at grant time if a variant is missing.
+  const variant=variantName(),info=VARIANTS[variant];
+  $('#vname').textContent=variant;$('#vsize').textContent=info?.size||'-';
   const missing=info&&info.built===false;
   $('#verr').classList.toggle('hide',!missing);
-  if(missing)$('#verr').textContent=`'${v}' 구성이 아직 빌드되지 않았습니다. 관리 페이지에서 build 하세요.`;
+  if(missing)$('#verr').textContent=`Variant '${variant}' has not been built. Build it from the admin workflow.`;
   $('#go').disabled=!!missing;
 }
-$('#c-go').onchange=updateVariant;
-$('#c-gemini').onchange=updateVariant;
-$('#c-codex').onchange=updateVariant;
-$('#c-claude').onchange=updateVariant;
 
+for(const id of ['c-go','c-gemini','c-codex','c-claude'])$('#'+id).onchange=updateVariant;
+$('#signin').onclick=signIn;
+$('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')signIn()});
+$('#pklogin').onclick=passkeySignIn;
+$('#logout').onclick=signOut;
 $('#go').onclick=grant;
-$('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')grant()});
-
-// ---- passkey ----
-// A passkey session authorises /api/grant on its own, so once authenticated the
-// password field is no longer needed and is hidden to make that obvious.
-let pkAuthed=false;
-function pkShowAuthed(){
-  pkAuthed=true;
-  $('#pkok').classList.remove('hide');
-  $('#pklogin').classList.add('hide');
-  $('#pwbox').classList.add('hide');
-  $('#pkbox').querySelector('.sepwrap').classList.add('hide');
-}
-async function pkDoLogin(){
-  const b=$('#pklogin'); b.disabled=true; $('#err').classList.add('hide');
-  try{ await pkLoginCeremony(); pkShowAuthed() }
-  catch(e){ $('#err').textContent=pkError(e); $('#err').classList.remove('hide') }
-  finally{ b.disabled=false }
-}
-$('#pklogin').onclick=pkDoLogin;
 document.addEventListener('click',e=>{
   const t=e.target.closest('.cp');if(!t)return;
   navigator.clipboard.writeText($('#'+t.dataset.c).textContent).then(()=>{
-    const o=t.textContent;t.textContent='copied';setTimeout(()=>t.textContent=o,1200)});
+    const old=t.textContent;t.textContent='copied';setTimeout(()=>t.textContent=old,1200)});
 });
+
+authChannel?.addEventListener('message',()=>checkSession().catch(()=>{}));
+addEventListener('focus',()=>checkSession().catch(()=>{}));
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkSession().catch(()=>{})});
+setInterval(()=>checkSession().catch(()=>{}),1000);
+Promise.all([loadInfo(),checkSession()]).catch(()=>{if(!authKnown)setAuth(false)});
 </script>
 </body>
 </html>

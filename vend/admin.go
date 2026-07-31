@@ -64,14 +64,42 @@ func (a *admin) newSession() string {
 }
 
 func (a *admin) authed(r *http.Request) bool {
+	ok, _ := a.sessionState(r)
+	return ok
+}
+
+// sessionState is the lightweight source of truth used by both pages to notice
+// logout and expiry without running the more expensive credential inspection.
+func (a *admin) sessionState(r *http.Request) (bool, time.Time) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
-		return false
+		return false, time.Time{}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	s := a.sessions[c.Value]
-	return s != nil && s.expires.After(time.Now())
+	if s == nil {
+		return false, time.Time{}
+	}
+	if !s.expires.After(time.Now()) {
+		delete(a.sessions, c.Value)
+		return false, time.Time{}
+	}
+	return true, s.expires
+}
+
+func (a *admin) handleSession(w http.ResponseWriter, r *http.Request) {
+	ok, expires := a.sessionState(r)
+	out := map[string]any{
+		"authed":   ok,
+		"passkeys": a.passkeyCountFor(r),
+	}
+	if ok {
+		out["expires"] = expires.UTC().Format(time.RFC3339)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(out)
 }
 
 // require wraps a handler with session auth.
@@ -130,6 +158,10 @@ func (a *admin) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *admin) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "POST only", 405)
+		return
+	}
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		a.mu.Lock()
 		delete(a.sessions, c.Value)
@@ -140,10 +172,11 @@ func (a *admin) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreds reports credential state. Available unauthenticated in an
-// aggregate-only form so the main page can warn before asking for a password.
+// aggregate-only form so the main page can warn before sign-in.
 func (a *admin) handleCreds(w http.ResponseWriter, r *http.Request) {
 	creds := inspectCreds(a.srv.cfg.AuthHome)
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	if a.authed(r) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"creds": creds, "warnings": summarize(creds), "authed": true,
@@ -359,27 +392,27 @@ func (a *admin) handleRelay(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := url.Parse(strings.TrimSpace(req.URL))
 	if err != nil {
-		http.Error(w, "URL을 해석할 수 없습니다", 400)
+		http.Error(w, "could not parse URL", 400)
 		return
 	}
 	// Only ever talk to a loopback callback listener. Without this the endpoint
 	// would be an authenticated SSRF primitive into the VM's network.
 	host := u.Hostname()
 	if u.Scheme != "http" && u.Scheme != "https" {
-		http.Error(w, "http(s) URL 만 허용됩니다", 400)
+		http.Error(w, "only http(s) URLs are allowed", 400)
 		return
 	}
 	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
-		http.Error(w, "localhost / 127.0.0.1 콜백 URL 만 허용됩니다", 400)
+		http.Error(w, "only localhost or 127.0.0.1 callback URLs are allowed", 400)
 		return
 	}
 	port := u.Port()
 	if port == "" {
-		http.Error(w, "콜백 포트가 없습니다", 400)
+		http.Error(w, "callback URL has no port", 400)
 		return
 	}
 	if p, err := strconv.Atoi(port); err != nil || p < 1024 || p > 65535 {
-		http.Error(w, "콜백 포트가 올바르지 않습니다", 400)
+		http.Error(w, "callback port is invalid", 400)
 		return
 	}
 	u.Host = "127.0.0.1:" + port
@@ -389,8 +422,8 @@ func (a *admin) handleRelay(w http.ResponseWriter, r *http.Request) {
 	rq, _ := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 	resp, err := (&http.Client{}).Do(rq)
 	if err != nil {
-		http.Error(w, "콜백 서버에 연결할 수 없습니다: "+err.Error()+
-			" — CLI 가 아직 대기 중인지 터미널을 확인하세요", 502)
+		http.Error(w, "could not reach callback server: "+err.Error()+
+			" — check that the CLI is still waiting in the terminal", 502)
 		return
 	}
 	defer resp.Body.Close()

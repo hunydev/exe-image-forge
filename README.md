@@ -20,6 +20,8 @@ product.
 - A persistent authentication home kept outside rebuilt images
 - An explicit credential allowlist that excludes prompts, histories, and logs
 - A password/passkey-protected web UI for login, bake, and image grants
+- Session-gated grant controls with immediate logout/expiry detection
+- A tabbed admin console for CLI logins, images, and passkey management
 - A read-only, token-scoped registry proxy with grant expiration
 - Daily in-image CLI updates and weekly forge refresh timers
 
@@ -146,8 +148,8 @@ make check
 This runs Go tests, `go vet`, formatting checks, and Bash syntax checks. CI runs
 the same validation on pushes and pull requests.
 
-The detailed original Korean operations guide remains available at
-[`docs/README.ko.md`](docs/README.ko.md).
+See the detailed [operations guide](docs/operations.md) for authentication,
+variant, update, security, and registry internals.
 
 ## License
 

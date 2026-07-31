@@ -102,13 +102,13 @@ func inspectCreds(home string) []Cred {
 			// gh tokens do not carry an expiry; they are revoked, not aged out.
 			gh.State = "ok"
 			gh.Refreshable = true
-			gh.Detail = "토큰 (만료 없음)"
+			gh.Detail = "Token (no expiry)"
 			if u := ghUserRe.FindSubmatch(b); u != nil {
-				gh.Detail = string(u[1]) + " · 만료 없음"
+				gh.Detail = string(u[1]) + " · no expiry"
 			}
 		} else {
 			gh.State = "unknown"
-			gh.Detail = "hosts.yml 에 토큰이 없습니다"
+			gh.Detail = "No token in hosts.yml"
 		}
 	}
 	out = append(out, gh)
@@ -130,7 +130,7 @@ func inspectCreds(home string) []Cred {
 		switch {
 		case cxa.Tokens != nil && cxa.Tokens.RefreshToken != "":
 			cx.Refreshable = true
-			cx.Detail = "ChatGPT 로그인"
+			cx.Detail = "ChatGPT sign-in"
 			if t, ok := jwtExp(cxa.Tokens.IDToken); ok {
 				cx.setExpiry(t)
 			} else {
@@ -139,10 +139,10 @@ func inspectCreds(home string) []Cred {
 		case cxa.APIKey != nil && *cxa.APIKey != "":
 			cx.State = "ok"
 			cx.Refreshable = true
-			cx.Detail = "API 키 (만료 없음)"
+			cx.Detail = "API key (no expiry)"
 		default:
 			cx.State = "unknown"
-			cx.Detail = "auth.json 을 해석할 수 없습니다"
+			cx.Detail = "Could not parse auth.json"
 		}
 	}
 	out = append(out, cx)
@@ -256,13 +256,13 @@ func summarize(creds []Cred) []string {
 		}
 	}
 	if len(missing) > 0 {
-		warn = append(warn, fmt.Sprintf("로그인되지 않음: %s", strings.Join(missing, ", ")))
+		warn = append(warn, fmt.Sprintf("Not signed in: %s", strings.Join(missing, ", ")))
 	}
 	if len(expired) > 0 {
-		warn = append(warn, fmt.Sprintf("만료됨 (재로그인 필요): %s", strings.Join(expired, ", ")))
+		warn = append(warn, fmt.Sprintf("Expired (sign in again): %s", strings.Join(expired, ", ")))
 	}
 	if len(stale) > 0 {
-		warn = append(warn, fmt.Sprintf("액세스 토큰 만료 — 첫 실행 시 자동 갱신됩니다: %s", strings.Join(stale, ", ")))
+		warn = append(warn, fmt.Sprintf("Access token expired; it will refresh on first use: %s", strings.Join(stale, ", ")))
 	}
 	return warn
 }

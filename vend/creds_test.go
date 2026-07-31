@@ -843,8 +843,115 @@ func TestVendingPrefersAndLabelsTheCredentialedImage(t *testing.T) {
 	}
 	for _, r := range info {
 		label, _ := r["label"].(string)
-		if !strings.Contains(label, "로그인") && !strings.Contains(label, "자격증명") {
+		if !strings.Contains(label, "signed in") && !strings.Contains(label, "credentials") {
 			t.Errorf("label %q does not say whether credentials are included", label)
+		}
+	}
+}
+
+func TestSessionStateExpiresImmediately(t *testing.T) {
+	a := &admin{sessions: map[string]*session{}}
+	a.sessions["active"] = &session{expires: time.Now().Add(time.Hour)}
+	a.sessions["expired"] = &session{expires: time.Now().Add(-time.Second)}
+
+	request := func(token string) *http.Request {
+		r := httptest.NewRequest("GET", "/api/session", nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+		return r
+	}
+	if ok, expires := a.sessionState(request("active")); !ok || expires.IsZero() {
+		t.Error("active session was not reported with its expiry")
+	}
+	if ok, _ := a.sessionState(request("expired")); ok {
+		t.Error("expired session was accepted")
+	}
+	a.mu.Lock()
+	_, stillStored := a.sessions["expired"]
+	a.mu.Unlock()
+	if stillStored {
+		t.Error("expired session was not removed immediately")
+	}
+}
+
+func TestPasswordLoginCreatesObservableSession(t *testing.T) {
+	const password = "test-password"
+	salt := "0123456789abcdef"
+	a := &admin{
+		srv:      &server{cfg: Config{Salt: salt, Hash: hashPassword(password, salt)}},
+		sessions: map[string]*session{},
+		pk:       loadPasskeyStore(filepath.Join(t.TempDir(), "passkeys.json")),
+	}
+	body, _ := json.Marshal(map[string]string{"password": password})
+	loginReq := httptest.NewRequest("POST", "/admin/api/login", bytes.NewReader(body))
+	loginResp := httptest.NewRecorder()
+	a.handleLogin(loginResp, loginReq)
+	if loginResp.Code != http.StatusOK {
+		t.Fatalf("login returned %d: %s", loginResp.Code, loginResp.Body)
+	}
+	var cookie *http.Cookie
+	for _, c := range loginResp.Result().Cookies() {
+		if c.Name == sessionCookie {
+			cookie = c
+			break
+		}
+	}
+	if cookie == nil {
+		t.Fatal("login did not issue a session cookie")
+	}
+
+	sessionReq := httptest.NewRequest("GET", "/api/session", nil)
+	sessionReq.Host = "images.example.com"
+	sessionReq.AddCookie(cookie)
+	sessionResp := httptest.NewRecorder()
+	a.handleSession(sessionResp, sessionReq)
+	var state struct {
+		Authed  bool   `json:"authed"`
+		Expires string `json:"expires"`
+	}
+	if err := json.Unmarshal(sessionResp.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Authed || state.Expires == "" {
+		t.Errorf("session endpoint returned %+v, want authenticated with expiry", state)
+	}
+	if cache := sessionResp.Header().Get("Cache-Control"); cache != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cache)
+	}
+}
+
+func TestWebUIUsesEnglishSessionGatesAndAdminTabs(t *testing.T) {
+	index, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := os.ReadFile("admin.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	passkey, err := os.ReadFile("passkey.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := string(index) + string(admin) + string(passkey)
+	for _, r := range all {
+		if r >= '\uac00' && r <= '\ud7a3' {
+			t.Fatal("Korean text remains in the browser UI")
+		}
+	}
+	indexSource := string(index)
+	for _, marker := range []string{
+		`id="authgate"`, `id="grantapp" class="hide"`, "/api/session",
+		"BroadcastChannel", "setInterval(()=>checkSession().catch(()=>{}),1000)",
+	} {
+		if !strings.Contains(indexSource, marker) {
+			t.Errorf("vending page is missing session gate marker %q", marker)
+		}
+	}
+	adminSource := string(admin)
+	for _, tab := range []string{"overview", "logins", "images", "security"} {
+		if !strings.Contains(adminSource, `data-tab="`+tab+`"`) ||
+			!strings.Contains(adminSource, `data-panel="`+tab+`"`) {
+			t.Errorf("admin UI is missing the %q tab or panel", tab)
 		}
 	}
 }

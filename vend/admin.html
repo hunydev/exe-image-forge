@@ -1,25 +1,27 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<title>Exe Image Forge · admin</title>
+<title>Exe Image Forge · Admin</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
 <style>
 :root{color-scheme:dark;--bg:#0d1117;--fg:#e6edf3;--mut:#8b949e;--card:#161b22;--line:#30363d;--acc:#2f81f7;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans KR",sans-serif}
-.wrap{max-width:1100px;margin:0 auto;padding:24px}
-header{display:flex;align-items:baseline;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1160px;margin:0 auto;padding:24px}
+header{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
 h1{font-size:20px;margin:0}
 h2{font-size:14px;margin:0 0 12px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+h3{font-size:16px;margin:0 0 4px}
 a{color:var(--acc)}
 .sp{flex:1}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+.cardhead{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px}
 label{display:block;font-size:12px;color:var(--mut);margin:0 0 6px;text-transform:uppercase;letter-spacing:.04em}
-input{width:100%;background:#0d1117;border:1px solid var(--line);border-radius:8px;color:var(--fg);padding:10px 12px;font:inherit}
-input:focus{outline:none;border-color:var(--acc)}
+input,select{width:100%;background:#0d1117;border:1px solid var(--line);border-radius:8px;color:var(--fg);padding:10px 12px;font:inherit}
+input:focus,select:focus{outline:none;border-color:var(--acc)}
 button{background:var(--acc);border:0;border-radius:8px;color:#fff;font:600 14px/1 inherit;padding:10px 16px;cursor:pointer}
 button.sec{background:transparent;border:1px solid var(--line);color:var(--fg)}
 button.sec:hover{border-color:var(--acc)}
@@ -28,6 +30,7 @@ button.full{width:100%;margin-top:14px;padding:12px}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;padding:0 10px 8px;font-weight:600}
 td{padding:10px;border-top:1px solid var(--line);vertical-align:middle}
+.tablewrap{overflow-x:auto}
 .pill{display:inline-block;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
 .s-ok{background:rgba(63,185,80,.15);color:var(--ok)}
 .s-stale{background:rgba(210,153,34,.15);color:var(--warn)}
@@ -41,137 +44,173 @@ td{padding:10px;border-top:1px solid var(--line);vertical-align:middle}
 .b-ok{background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.4)}
 #termbox{background:#000;border:1px solid var(--line);border-radius:10px;padding:8px;height:460px}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;max-height:240px;margin:12px 0 0}
+pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;max-height:280px;margin:12px 0 0}
 .hide{display:none !important}
 code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-size:12.5px}
 .err{color:var(--bad);font-size:13px;margin-top:10px}
 .sepwrap{display:flex;align-items:center;gap:10px;margin:14px 0;color:var(--mut);font-size:12px}
 .sepwrap::before,.sepwrap::after{content:"";flex:1;height:1px;background:var(--line)}
-.ctx{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:14px;
-  max-height:340px;overflow:auto;font-size:12px;line-height:1.55;white-space:pre-wrap;
-  word-break:break-word;color:var(--mut);margin:0}
-.vgrid{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;align-items:baseline}
+.ctx{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:14px;max-height:420px;overflow:auto;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:var(--mut);margin:0}
+.vgrid{display:grid;grid-template-columns:minmax(140px,auto) 1fr;gap:5px 18px;align-items:baseline}
 .vk{color:var(--mut)}
 .del{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
 .del:hover{color:var(--bad);border-color:var(--bad)}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px;overflow-x:auto}
+.tab{background:transparent;color:var(--mut);border:0;border-bottom:2px solid transparent;border-radius:0;padding:11px 14px;white-space:nowrap}
+.tab:hover{color:var(--fg)}
+.tab[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--acc)}
+.panel{display:none}
+.panel.active{display:block}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+.metric{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.metric .value{font-size:22px;font-weight:700;margin-top:4px}
+.metric .label{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.session{font-size:12px;color:var(--ok);white-space:nowrap}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.wrap{padding:16px}.metrics,.grid2{grid-template-columns:1fr}.session{width:100%;order:5}.card{padding:15px}#termbox{height:380px}}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-<div id="gate" class="hide">
-  <header><h1>Exe Image Forge · admin</h1></header>
+<div id="gate">
+  <header><h1>Exe Image Forge · Admin</h1></header>
   <div class="card" style="max-width:420px">
-    <button id="pklogin" class="full hide" style="margin-top:0">🔑 패스키로 로그인</button>
-    <div class="sepwrap hide" id="sep"><span>또는</span></div>
+    <div class="cardhead"><div><h3>Administrator sign-in</h3><div class="note">Use the same credentials as the image grant page.</div></div></div>
+    <div id="sessionnotice" class="banner b-bad hide"></div>
+    <button id="pklogin" class="full hide" style="margin-top:0">🔑 Sign in with a passkey</button>
+    <div class="sepwrap hide" id="sep"><span>or use a password</span></div>
     <label for="pw">Password</label>
     <input id="pw" type="password" autocomplete="current-password" autofocus>
-    <button id="login" class="full">로그인</button>
+    <button id="login" class="full">Sign in</button>
     <div class="err hide" id="lerr"></div>
-    <p class="note" style="margin:12px 0 0">메인 페이지와 동일한 암호입니다.</p>
   </div>
 </div>
 
 <div id="app" class="hide">
   <header>
-    <h1>Exe Image Forge · admin</h1>
+    <h1>Exe Image Forge · Admin</h1>
     <span class="sp"></span>
-    <a href="/">← 발급 페이지</a>
-    <button class="sec" id="logout">로그아웃</button>
+    <span class="session" id="sessionstatus">Signed in</span>
+    <a href="/">← Image grants</a>
+    <button class="sec" id="logout">Sign out</button>
   </header>
 
-  <div id="banners"></div>
+  <nav class="tabs" role="tablist" aria-label="Administration sections">
+    <button class="tab" role="tab" data-tab="overview" aria-selected="true">Overview</button>
+    <button class="tab" role="tab" data-tab="logins" aria-selected="false">CLI Logins</button>
+    <button class="tab" role="tab" data-tab="images" aria-selected="false">Images</button>
+    <button class="tab" role="tab" data-tab="security" aria-selected="false">Security</button>
+  </nav>
 
-  <div class="card">
-    <h2>자격증명 상태</h2>
-    <table>
-      <thead><tr><th>서비스</th><th>상태</th><th>만료</th><th>계정</th><th></th></tr></thead>
-      <tbody id="creds"></tbody>
-    </table>
-    <p class="note" style="margin:14px 0 0">행을 클릭하면 아래 터미널에 로그인 명령이 입력됩니다.
-      <span style="color:var(--warn)">액세스 토큰 만료</span>는 refresh 토큰이 있으므로 CLI가 첫 실행 시 자동 갱신합니다 — 보통 조치가 필요 없습니다.</p>
-  </div>
-
-  <div class="card">
-    <h2>터미널 <span class="note" id="tstat"></span></h2>
-    <p class="note" style="margin:-4px 0 12px">이미지 안에서 실행됩니다. 여기서 로그인하면 자격증명이 영속 HOME에 저장됩니다.
-      아래 버튼은 모두 <b>localhost 리다이렉트를 회피하는</b> 방식을 사용합니다.</p>
-    <div class="row" style="margin-bottom:10px">
-      <button class="sec" id="tstart">터미널 시작</button>
-      <button class="sec" id="tstop" disabled>종료</button>
-      <span class="sp"></span>
-      <button class="sec" data-cmd="gh auth login --git-protocol https" title="device code 방식">gh</button>
-      <button class="sec" data-cmd="codex login --device-auth" title="device code 방식">codex</button>
-      <button class="sec" data-cmd="claude auth login" title="platform.claude.com 리다이렉트 + 코드 붙여넣기 (setup-token 은 토큰만 출력하고 저장하지 않음)">claude</button>
-      <button class="sec" data-cmd="NO_BROWSER=true gemini" title="codeassist.google.com 리다이렉트 + 코드 붙여넣기">gemini</button>
+  <section class="panel active" id="panel-overview" data-panel="overview">
+    <div class="metrics">
+      <div class="metric"><div class="label">CLI credentials</div><div class="value" id="metriccreds">-</div><div class="note" id="metriccredsnote">Checking…</div></div>
+      <div class="metric"><div class="label">Built variants</div><div class="value" id="metricvariants">-</div><div class="note">Ready to vend</div></div>
+      <div class="metric"><div class="label">Last bake</div><div class="value" id="metricbake">-</div><div class="note" id="metricbakenote">Credentialed images</div></div>
     </div>
-    <div id="termbox"></div>
-
-    <details id="relaybox" style="margin-top:14px">
-      <summary style="cursor:pointer;color:var(--mut);font-size:13px">Gemini 콜백 릴레이 — 예비 수단 (보통은 필요 없음)</summary>
-      <p class="note" style="margin:12px 0 8px"><b>먼저 <code>NO_BROWSER=true</code> 를 쓰세요.</b> 그러면 Gemini 도
-        <code>codeassist.google.com/authcode</code> 로 리다이렉트되고 코드를 붙여넣는 방식이라 localhost 콜백이 없습니다.
-        위 <b>gemini</b> 버튼이 이 방식으로 실행합니다.</p>
-      <p class="note" style="margin:0 0 8px">그래도 <code>http://localhost:&lt;포트&gt;/oauth2callback?...</code> 로
-        리다이렉트되어 “연결 안됨” 이 나오는 경우에만, 주소창 URL 을 그대로 복사해 넣으면 VM 안에서 대신 요청합니다.</p>
-      <div class="row">
-        <input id="relayurl" placeholder="http://localhost:52341/oauth2callback?code=...&amp;state=..." style="flex:1;min-width:280px">
-        <button id="relaygo">릴레이</button>
+    <div id="banners"></div>
+    <div class="grid2">
+      <div class="card">
+        <h2>Tool versions</h2>
+        <p class="note">The VM updates installed CLIs after boot and daily. The weekly refresh rebuilds and re-bakes the images.</p>
+        <div id="vers" class="note">-</div>
       </div>
-      <div class="note" id="relaystat" style="margin-top:8px"></div>
-    </details>
-  </div>
-
-  <div class="card">
-    <h2>도구 버전</h2>
-    <p class="note" style="margin:-4px 0 10px">VM 안에서는 <code>ai-cli-update.timer</code> 가 부팅 3분 후 + 매일
-      자동 업데이트하고, 이 서버는 매주 일요일 <code>exe-image-forge refresh</code> 로 이미지를 다시 굽습니다.</p>
-    <div id="vers" class="note">-</div>
-    <p class="note" style="margin:14px 0 8px">이미지 구성별 다운로드 크기 — Codex, Claude, Gemini, Go를
-      홈 화면에서 각각 선택할 수 있습니다.</p>
-    <div id="varsizes" class="note">-</div>
-  </div>
-
-  <div class="card">
-    <h2>AI 에이전트 컨텍스트</h2>
-    <p class="note" style="margin:-4px 0 10px">이미지에 어떤 도구가 있고 어떤 환경인지 각 CLI 의 전역 지침
-      파일(<code>~/.codex/AGENTS.md</code>, <code>~/.claude/CLAUDE.md</code>, <code>~/.gemini/GEMINI.md</code>)에
-      자동으로 기록됩니다. VM 부팅 때마다 다시 생성되므로 커널·CPU·디스크 같은 값이 실제 머신과 일치합니다.
-      구성마다 내용이 다릅니다 — 없는 도구를 있다고 말하지 않습니다.</p>
-    <div class="row" style="margin-bottom:10px">
-      <select id="ctxvar" style="max-width:200px">
-        <option value="min">min (기본)</option>
-      </select>
+      <div class="card">
+        <h2>Variant inventory</h2>
+        <p class="note">Codex, Claude, Gemini, and Go are independently selectable on the grant page.</p>
+        <div id="varsizes" class="note">-</div>
+      </div>
     </div>
-    <pre id="ctxbody" class="ctx">불러오는 중...</pre>
-  </div>
+  </section>
 
-  <div class="card">
-    <h2>패스키 (WebAuthn)</h2>
-    <p class="note" style="margin:-4px 0 12px">패스키는 등록한 도메인에만 유효합니다. 지금 접속한 도메인:
-      <code id="rpid">-</code>. 다른 도메인(예: <code>images.example.com</code>)에서도 쓰려면 그 도메인으로 접속해
-      각각 등록해야 합니다 — WebAuthn 명세상 자격증명이 도메인에 고정되기 때문입니다.</p>
-    <table>
-      <thead><tr><th>이름</th><th>도메인</th><th>등록</th><th>마지막 사용</th><th></th></tr></thead>
-      <tbody id="pklist"></tbody>
-    </table>
-    <div class="row" style="margin-top:14px">
-      <input id="pklabel" placeholder="패스키 이름 (예: 맥북 Touch ID)" style="flex:1;min-width:220px">
-      <button id="pkadd">패스키 추가</button>
+  <section class="panel" id="panel-logins" data-panel="logins">
+    <div class="card">
+      <div class="cardhead">
+        <div><h3>Credential status</h3><div class="note">Sign in again only when a credential is missing or expired.</div></div>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Service</th><th>Status</th><th>Expiry</th><th>Account</th><th></th></tr></thead>
+          <tbody id="creds"></tbody>
+        </table>
+      </div>
+      <p class="note" style="margin:14px 0 0">A stale access token with a refresh token normally renews itself on first CLI use.</p>
     </div>
-    <div class="note" id="pkstat" style="margin-top:8px"></div>
-  </div>
 
-  <div class="card">
-    <h2>이미지 굽기 (bake)</h2>
-    <p class="note" style="margin:-4px 0 12px">현재 자격증명을 설정된 credentialed dev image 구성으로 굽습니다.
-      마지막 bake: <span id="bakedat" class="mono">-</span></p>
-    <div class="row">
-      <button id="bake">지금 bake</button>
-      <span class="note" id="bstat"></span>
+    <div class="card">
+      <div class="cardhead">
+        <div><h3>Authentication terminal</h3><div class="note">Runs inside the full image with the persistent authentication home mounted.</div></div>
+        <span class="sp"></span><span class="note" id="tstat">Stopped</span>
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <button class="sec" id="tstart">Start terminal</button>
+        <button class="sec" id="tstop" disabled>Stop</button>
+        <span class="sp"></span>
+        <button class="sec" data-cmd="gh auth login --git-protocol https" title="Device-code flow">GitHub</button>
+        <button class="sec" data-cmd="codex login --device-auth" title="Device-code flow">Codex</button>
+        <button class="sec" data-cmd="claude auth login" title="Redirect and paste-code flow">Claude</button>
+        <button class="sec" data-cmd="NO_BROWSER=true gemini" title="Redirect and paste-code flow">Gemini</button>
+      </div>
+      <div id="termbox"></div>
+
+      <details id="relaybox" style="margin-top:14px">
+        <summary style="cursor:pointer;color:var(--mut);font-size:13px">Gemini callback relay · fallback only</summary>
+        <p class="note"><b>Use <code>NO_BROWSER=true</code> first.</b> It redirects to <code>codeassist.google.com/authcode</code> and accepts a pasted code without a localhost callback.</p>
+        <p class="note">If Gemini still redirects to an unreachable <code>http://localhost:&lt;port&gt;/oauth2callback?...</code>, paste the complete browser URL below so the VM can relay it.</p>
+        <div class="row">
+          <input id="relayurl" placeholder="http://localhost:52341/oauth2callback?code=...&amp;state=..." style="flex:1;min-width:280px">
+          <button id="relaygo">Relay callback</button>
+        </div>
+        <div class="note" id="relaystat" style="margin-top:8px"></div>
+      </details>
     </div>
-    <pre id="blog" class="mono hide"></pre>
-  </div>
+  </section>
+
+  <section class="panel" id="panel-images" data-panel="images">
+    <div class="card">
+      <div class="cardhead">
+        <div><h3>Bake credentialed images</h3><div class="note">Copies the allowlisted credentials into every configured dev image variant.</div></div>
+      </div>
+      <p class="note">Last bake: <span id="bakedat" class="mono">-</span></p>
+      <div class="row">
+        <button id="bake">Bake now</button>
+        <span class="note" id="bstat"></span>
+      </div>
+      <pre id="blog" class="mono hide"></pre>
+    </div>
+
+    <div class="card">
+      <div class="cardhead">
+        <div><h3>Agent context</h3><div class="note">Preview the generated global instructions for each image variant.</div></div>
+      </div>
+      <p class="note">The context is regenerated at boot and accurately reports the available tools, kernel, CPU, and disk environment.</p>
+      <div class="row" style="margin-bottom:10px">
+        <select id="ctxvar" style="max-width:240px"><option value="min">min (default)</option></select>
+      </div>
+      <pre id="ctxbody" class="ctx">Loading…</pre>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-security" data-panel="security">
+    <div class="card">
+      <div class="cardhead">
+        <div><h3>Passkeys</h3><div class="note">Passwordless sign-in with WebAuthn.</div></div>
+      </div>
+      <p class="note">Passkeys are bound to the domain where they are registered. Current relying-party domain: <code id="rpid">-</code>.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Name</th><th>Domain</th><th>Registered</th><th>Last used</th><th></th></tr></thead>
+          <tbody id="pklist"></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <input id="pklabel" placeholder="Passkey name, e.g. MacBook Touch ID" style="flex:1;min-width:220px">
+        <button id="pkadd">Add passkey</button>
+      </div>
+      <div class="note" id="pkstat" style="margin-top:8px"></div>
+    </div>
+  </section>
 </div>
 </div>
 
@@ -181,229 +220,289 @@ import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
 import { FitAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
 
 const $=s=>document.querySelector(s);
-const KO={ok:'정상',stale:'액세스 토큰 만료',expired:'만료됨',missing:'로그인 안됨',unknown:'확인 불가'};
+const STATE={ok:'Signed in',stale:'Refresh pending',expired:'Expired',missing:'Not signed in',unknown:'Unknown'};
+let authed=false,authKnown=false,sessionExpires='',sessionRequest=null,term,fit,ws,bakePoll;
+const authChannel='BroadcastChannel' in window?new BroadcastChannel('exe-image-forge-auth'):null;
+
+async function api(path,options){
+  const r=await fetch(path,{cache:'no-store',...options});
+  if(!r.ok){const e=new Error((await r.text()).trim()||`Request failed (${r.status})`);e.status=r.status;throw e}
+  const text=await r.text();
+  return text?JSON.parse(text):{};
+}
+const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 
 function fmtLeft(sec){
   if(sec===undefined||sec===0)return '';
-  const a=Math.abs(sec), d=Math.floor(a/86400), h=Math.floor(a%86400/3600), m=Math.floor(a%3600/60);
-  const s=d?`${d}일 ${h}시간`:h?`${h}시간 ${m}분`:`${m}분`;
-  return sec<0?`${s} 전 만료`:`${s} 남음`;
+  const n=Math.abs(sec),days=Math.floor(n/86400),hours=Math.floor(n%86400/3600),minutes=Math.floor(n%3600/60);
+  const value=days?`${days}d ${hours}h`:hours?`${hours}h ${minutes}m`:`${minutes}m`;
+  return sec<0?`expired ${value} ago`:`${value} remaining`;
 }
 
-async function api(p,o){const r=await fetch(p,o);if(!r.ok)throw new Error((await r.text()).trim());return r.json()}
+function updateSessionLabel(){
+  if(!authed)return;
+  const end=sessionExpires?new Date(sessionExpires):null;
+  $('#sessionstatus').textContent=end&&!isNaN(end)?`Signed in · expires ${end.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`:'Signed in';
+}
 
-async function refresh(){
-  const d=await api('/api/creds');
-  if(!d.authed){
-    $('#gate').classList.remove('hide');$('#app').classList.add('hide');
-    if(d.passkeys>0&&pkSupported()){$('#pklogin').classList.remove('hide');$('#sep').classList.remove('hide')}
-    return false;
+function setAuth(next,message=''){
+  const wasAuthed=authed;
+  authed=next;authKnown=true;
+  $('#gate').classList.toggle('hide',next);
+  $('#app').classList.toggle('hide',!next);
+  if(next){
+    $('#sessionnotice').classList.add('hide');
+    if(!wasAuthed)refreshData().catch(handleAPIError);
+  }else{
+    if(ws)ws.close();
+    const text=message||(wasAuthed?'Your session ended. Sign in again to continue.':'');
+    if(text){
+      $('#sessionnotice').textContent=text;
+      $('#sessionnotice').classList.remove('hide');
+    }
+    setTimeout(()=>$('#pw').focus(),0);
   }
-  $('#gate').classList.add('hide');$('#app').classList.remove('hide');
-  $('#bakedat').textContent=d.baked?new Date(d.baked).toLocaleString():'없음';
-  pkList().catch(()=>{});
-  loadCtx();
-  fetch('/api/info').then(r=>r.json()).then(i=>{
-    const V=i.variants||{}, names=i.variant_names||Object.keys(V);
-    $('#varsizes').innerHTML=`<div class="vgrid">`+names.map(k=>
-      `<span class="vk">${k}</span><span class="mono">${V[k]&&V[k].built?V[k].size:
-        '<span class="pill s-missing">미빌드</span>'}</span>`).join('')+`</div>`;
-    const selected=$('#ctxvar').value;
-    $('#ctxvar').innerHTML=names.map(k=>`<option value="${k}">${k}${k==='min'?' (기본)':''}</option>`).join('');
-    if(names.includes(selected))$('#ctxvar').value=selected;
-  }).catch(()=>{});
-  const v=d.versions;
-  $('#vers').innerHTML = v
-    ? `<div class="vgrid">`+Object.entries(v).filter(([k])=>k!=='updated')
-        .map(([k,val])=>`<span class="vk">${k}</span><span class="mono">${val||'-'}</span>`).join('')
-      +`</div>`+(v.updated?`<div style="margin-top:8px">마지막 갱신: ${new Date(v.updated).toLocaleString()}</div>`:'')
-    : '이미지에서 버전 정보를 읽지 못했습니다 (아직 build 하지 않았을 수 있습니다)';
+}
 
-  const bad=d.creds.filter(c=>c.state==='missing'||c.state==='expired'||c.state==='unknown');
-  $('#banners').innerHTML = bad.length
-    ? `<div class="banner b-bad"><b>조치 필요</b><span>${bad.map(c=>c.name).join(', ')} — 아래 터미널에서 로그인한 뒤 bake 하세요.</span></div>`
-    : `<div class="banner b-ok"><b>정상</b><span>모든 서비스가 로그인되어 있습니다.</span></div>`;
+async function checkSession(){
+  if(sessionRequest)return sessionRequest;
+  sessionRequest=(async()=>{
+    const d=await api('/api/session');
+    sessionExpires=d.expires||'';
+    const hasPasskey=d.passkeys>0&&pkSupported();
+    $('#pklogin').classList.toggle('hide',!hasPasskey);
+    $('#sep').classList.toggle('hide',!hasPasskey);
+    setAuth(!!d.authed);updateSessionLabel();
+    return !!d.authed;
+  })();
+  try{return await sessionRequest}finally{sessionRequest=null}
+}
 
-  maybeOpenRelay(d.creds);
-  $('#creds').innerHTML=d.creds.map(c=>{
-    const cmd=c.login_cmd.replace(/"/g,'&quot;');
-    return `
-    <tr>
-      <td><b>${c.name}</b><div class="note mono">${c.file}</div></td>
-      <td><span class="pill s-${c.state}">${KO[c.state]||c.state}</span></td>
-      <td class="note">${c.expires?fmtLeft(c.seconds_left):'—'}</td>
-      <td class="note">${c.detail||'—'}</td>
-      <td><button class="sec" data-cmd="${cmd}" title="터미널에서 실행: ${cmd}">${c.state==='ok'?'다시 로그인':'로그인'}</button></td>
-    </tr>`;}).join('');
-  return true;
+function handleAPIError(error){
+  if(error?.status===401){checkSession().catch(()=>{});return}
+  console.error(error);
+}
+
+// ---- tabs ----
+function switchTab(name,updateHash=true){
+  const valid=['overview','logins','images','security'];
+  if(!valid.includes(name))name='overview';
+  document.querySelectorAll('.tab').forEach(button=>button.setAttribute('aria-selected',button.dataset.tab===name?'true':'false'));
+  document.querySelectorAll('.panel').forEach(panel=>panel.classList.toggle('active',panel.dataset.panel===name));
+  if(updateHash)history.replaceState(null,'','#'+name);
+}
+document.querySelectorAll('.tab').forEach(button=>button.onclick=()=>switchTab(button.dataset.tab));
+addEventListener('hashchange',()=>switchTab(location.hash.slice(1),false));
+switchTab(location.hash.slice(1),false);
+
+async function refreshData(){
+  if(!authed)return;
+  const [data,info]=await Promise.all([api('/api/creds'),api('/api/info')]);
+  if(!data.authed){setAuth(false);return}
+
+  const baked=data.baked?new Date(data.baked):null;
+  $('#bakedat').textContent=baked?baked.toLocaleString():'Never';
+  $('#metricbake').textContent=baked?baked.toLocaleDateString():'Never';
+  $('#metricbakenote').textContent=baked?baked.toLocaleTimeString():'Credentialed images have not been baked';
+
+  const credentials=data.creds||[];
+  const healthy=credentials.filter(c=>c.state==='ok'||c.state==='stale').length;
+  $('#metriccreds').textContent=`${healthy}/${credentials.length}`;
+  $('#metriccredsnote').textContent=healthy===credentials.length?'All credentials available':'Action required';
+
+  const variants=info.variants||{},names=info.variant_names||Object.keys(variants);
+  const built=names.filter(name=>variants[name]?.built).length;
+  $('#metricvariants').textContent=`${built}/${names.length}`;
+  $('#varsizes').innerHTML=`<div class="vgrid">${names.map(name=>
+    `<span class="vk">${esc(name)}</span><span class="mono">${variants[name]?.built?esc(variants[name].size):
+      '<span class="pill s-missing">Not built</span>'}</span>`).join('')}</div>`;
+
+  const selected=$('#ctxvar').value;
+  $('#ctxvar').innerHTML=names.map(name=>`<option value="${esc(name)}">${esc(name)}${name==='min'?' (default)':''}</option>`).join('');
+  if(names.includes(selected))$('#ctxvar').value=selected;
+
+  const versions=data.versions;
+  $('#vers').innerHTML=versions
+    ? `<div class="vgrid">${Object.entries(versions).filter(([key])=>key!=='updated')
+        .map(([key,value])=>`<span class="vk">${esc(key)}</span><span class="mono">${esc(value||'-')}</span>`).join('')}
+      </div>${versions.updated?`<div style="margin-top:8px">Last updated: ${new Date(versions.updated).toLocaleString()}</div>`:''}`
+    : 'Version metadata is unavailable. The images may not have been built yet.';
+
+  const bad=credentials.filter(c=>['missing','expired','unknown'].includes(c.state));
+  $('#banners').innerHTML=bad.length
+    ? `<div class="banner b-bad"><b>Action required</b><span>${bad.map(c=>esc(c.name)).join(', ')} — open CLI Logins, authenticate, then bake the images.</span></div>`
+    : `<div class="banner b-ok"><b>Healthy</b><span>All CLI credentials are available.</span></div>`;
+
+  maybeOpenRelay(credentials);
+  $('#creds').innerHTML=credentials.map(credential=>{
+    const command=esc(credential.login_cmd);
+    return `<tr>
+      <td><b>${esc(credential.name)}</b><div class="note mono">${esc(credential.file)}</div></td>
+      <td><span class="pill s-${esc(credential.state)}">${esc(STATE[credential.state]||credential.state)}</span></td>
+      <td class="note">${credential.expires?esc(fmtLeft(credential.seconds_left)):'—'}</td>
+      <td class="note">${esc(credential.detail||'—')}</td>
+      <td><button class="sec" data-cmd="${command}" data-reauth="${credential.state==='ok'}">${credential.state==='ok'?'Sign in again':'Sign in'}</button></td>
+    </tr>`}).join('');
+
+  await Promise.all([pkList(),loadCtx()]);
 }
 
 // ---- login gate ----
 async function doLogin(){
+  const button=$('#login');
+  button.disabled=true;button.textContent='Signing in…';$('#lerr').classList.add('hide');
   try{
-    await api('/admin/api/login',{method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({password:$('#pw').value})});
-    $('#lerr').classList.add('hide'); await refresh();
-  }catch(e){$('#lerr').textContent=e.message;$('#lerr').classList.remove('hide')}
+    await api('/admin/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:$('#pw').value})});
+    $('#pw').value='';await checkSession();authChannel?.postMessage('changed');
+  }catch(error){$('#lerr').textContent=error.message;$('#lerr').classList.remove('hide')}
+  finally{button.disabled=false;button.textContent='Sign in'}
+}
+async function passkeyLogin(){
+  const error=$('#lerr'),button=$('#pklogin');
+  error.classList.add('hide');button.disabled=true;
+  try{await pkLoginCeremony();await checkSession();authChannel?.postMessage('changed')}
+  catch(e){error.textContent=pkError(e);error.classList.remove('hide')}
+  finally{button.disabled=false}
 }
 $('#login').onclick=doLogin;
-$('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
-$('#logout').onclick=async()=>{await fetch('/admin/api/logout',{method:'POST'});location.reload()};
+$('#pw').addEventListener('keydown',event=>{if(event.key==='Enter')doLogin()});
+$('#pklogin').onclick=passkeyLogin;
+$('#logout').onclick=async()=>{
+  await fetch('/admin/api/logout',{method:'POST'});
+  sessionExpires='';setAuth(false,'You have signed out.');authChannel?.postMessage('changed');
+};
 
 // ---- terminal ----
-let term,fit,ws;
 function ensureTerm(){
   if(term)return;
   term=new Terminal({fontSize:13,fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace',
     theme:{background:'#000000',foreground:'#e6edf3'},cursorBlink:true,scrollback:5000});
-  fit=new FitAddon(); term.loadAddon(fit);
-  term.open($('#termbox')); fit.fit();
+  fit=new FitAddon();term.loadAddon(fit);term.open($('#termbox'));fit.fit();
   addEventListener('resize',()=>{fit.fit();sendSize()});
 }
-function sendSize(){
-  if(ws&&ws.readyState===1)ws.send('\x00'+JSON.stringify({cols:term.cols,rows:term.rows}));
-}
+function sendSize(){if(ws&&ws.readyState===1)ws.send('\x00'+JSON.stringify({cols:term.cols,rows:term.rows}))}
 function startTerm(){
-  ensureTerm();
+  switchTab('logins');ensureTerm();
   if(ws&&ws.readyState<=1)return;
-  const u=new URL('/admin/api/term',location.href);
-  u.protocol=location.protocol==='https:'?'wss:':'ws:';
-  u.searchParams.set('cols',term.cols); u.searchParams.set('rows',term.rows);
-  ws=new WebSocket(u); ws.binaryType='arraybuffer';
-  $('#tstat').textContent='연결 중...';
-  ws.onopen=()=>{$('#tstat').textContent='연결됨';$('#tstop').disabled=false;$('#tstart').disabled=true;sendSize();term.focus()};
-  ws.onmessage=e=>term.write(typeof e.data==='string'?e.data:new Uint8Array(e.data));
-  ws.onclose=()=>{$('#tstat').textContent='종료됨';$('#tstop').disabled=true;$('#tstart').disabled=false;refresh()};
-  ws.onerror=()=>{$('#tstat').textContent='연결 실패'};
-  if(!startTerm._bound){startTerm._bound=true;term.onData(d=>{if(ws&&ws.readyState===1)ws.send(d)})}
+  const url=new URL('/admin/api/term',location.href);
+  url.protocol=location.protocol==='https:'?'wss:':'ws:';
+  url.searchParams.set('cols',term.cols);url.searchParams.set('rows',term.rows);
+  ws=new WebSocket(url);ws.binaryType='arraybuffer';$('#tstat').textContent='Connecting…';
+  ws.onopen=()=>{$('#tstat').textContent='Connected';$('#tstop').disabled=false;$('#tstart').disabled=true;sendSize();term.focus()};
+  ws.onmessage=event=>term.write(typeof event.data==='string'?event.data:new Uint8Array(event.data));
+  ws.onclose=()=>{$('#tstat').textContent='Stopped';$('#tstop').disabled=true;$('#tstart').disabled=false;refreshData().catch(handleAPIError)};
+  ws.onerror=()=>{$('#tstat').textContent='Connection failed'};
+  if(!startTerm.bound){startTerm.bound=true;term.onData(data=>{if(ws&&ws.readyState===1)ws.send(data)})}
+}
+function runCmd(command){
+  const clean=command.split('#')[0].trim();
+  switchTab('logins');
+  if(!ws||ws.readyState!==1){startTerm();setTimeout(()=>runCmd(command),1400);return}
+  $('#termbox').scrollIntoView({behavior:'smooth',block:'center'});ws.send(clean+'\n');term.focus();
 }
 $('#tstart').onclick=startTerm;
 $('#tstop').onclick=()=>ws&&ws.close();
-
-function runCmd(cmd){
-  const c=cmd.split('#')[0].trim();
-  if(!ws||ws.readyState!==1){startTerm();setTimeout(()=>runCmd(cmd),1400);return}
-  $('#termbox').scrollIntoView({behavior:'smooth',block:'center'});
-  ws.send(c+'\n'); term.focus();
-}
-document.addEventListener('click',e=>{
-  const t=e.target.closest('[data-cmd]'); if(!t)return;
-  // Re-authenticating a working credential can invalidate it, so make that
-  // case deliberate. Fresh logins stay one click.
-  if(t.textContent.trim()==='다시 로그인' &&
-     !confirm('이미 로그인되어 있습니다. 다시 로그인하면 기존 자격증명이 무효화될 수 있습니다. 진행할까요?')) return;
-  runCmd(t.dataset.cmd);
+document.addEventListener('click',event=>{
+  const target=event.target.closest('[data-cmd]');if(!target)return;
+  if(target.dataset.reauth==='true'&&!confirm('This credential already works. Signing in again may invalidate it. Continue?'))return;
+  runCmd(target.dataset.cmd);
 });
 
-// ---- gemini oauth callback relay ----
+// ---- Gemini callback relay ----
 $('#relaygo').onclick=async()=>{
-  const el=$('#relaystat'), b=$('#relaygo');
-  b.disabled=true; el.textContent='요청 중...'; el.style.color='';
+  const status=$('#relaystat'),button=$('#relaygo');
+  button.disabled=true;status.textContent='Relaying…';status.style.color='';
   try{
-    const d=await api('/admin/api/relay',{method:'POST',headers:{'content-type':'application/json'},
+    const result=await api('/admin/api/relay',{method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({url:$('#relayurl').value})});
-    el.textContent=`콜백 서버 응답 ${d.status} — 터미널에서 로그인 완료를 확인하세요`;
-    el.style.color='var(--ok)'; $('#relayurl').value='';
-    setTimeout(refresh,1500);
-  }catch(e){ el.textContent=e.message; el.style.color='var(--bad)'; }
-  finally{ b.disabled=false; }
+    status.textContent=`Callback server returned ${result.status}. Check the terminal for completion.`;
+    status.style.color='var(--ok)';$('#relayurl').value='';setTimeout(()=>refreshData().catch(handleAPIError),1500);
+  }catch(error){status.textContent=error.message;status.style.color='var(--bad)'}
+  finally{button.disabled=false}
 };
-$('#relayurl').addEventListener('keydown',e=>{if(e.key==='Enter')$('#relaygo').click()});
-// Open the relay box automatically when gemini still needs a login.
-// The relay is now a fallback: NO_BROWSER=true avoids the localhost callback
-// entirely, so only offer it if gemini still reports needing it.
-function maybeOpenRelay(creds){
-  const g=creds.find(c=>c.tool==='gemini');
-  if(g&&g.needs_relay&&(g.state==='missing'||g.state==='expired'))$('#relaybox').open=true;
+$('#relayurl').addEventListener('keydown',event=>{if(event.key==='Enter')$('#relaygo').click()});
+function maybeOpenRelay(credentials){
+  const gemini=credentials.find(c=>c.tool==='gemini');
+  if(gemini?.needs_relay&&['missing','expired'].includes(gemini.state))$('#relaybox').open=true;
 }
-
 
 // ---- agent context ----
 async function loadCtx(){
-  const v=$('#ctxvar').value;
-  $('#ctxbody').textContent='불러오는 중...';
+  if(!authed)return;
+  const variant=$('#ctxvar').value;
+  $('#ctxbody').textContent='Loading…';
   try{
-    const d=await api('/admin/api/context?variant='+encodeURIComponent(v));
-    $('#ctxbody').textContent=d.context||`'${v}' 구성이 아직 빌드되지 않았습니다.`;
-  }catch(e){ $('#ctxbody').textContent=e.message }
+    const data=await api('/admin/api/context?variant='+encodeURIComponent(variant));
+    $('#ctxbody').textContent=data.context||`Variant '${variant}' has not been built.`;
+  }catch(error){$('#ctxbody').textContent=error.message;if(error.status===401)checkSession().catch(()=>{})}
 }
 $('#ctxvar').onchange=loadCtx;
 
-// ---- passkeys (WebAuthn) ----
-// Ceremony helpers live in /passkey.js, shared with the vending page.
-
+// ---- passkeys ----
 async function pkRegister(){
-  const st=$('#pkstat'), b=$('#pkadd');
-  if(!pkSupported()){st.textContent='이 브라우저/컨텍스트에서는 패스키를 쓸 수 없습니다';st.style.color='var(--bad)';return}
+  const status=$('#pkstat'),button=$('#pkadd');
+  if(!pkSupported()){status.textContent='Passkeys are unavailable in this browser or context';status.style.color='var(--bad)';return}
   const label=$('#pklabel').value.trim()||'passkey';
-  b.disabled=true; st.style.color=''; st.textContent='인증기를 기다리는 중...';
+  button.disabled=true;status.style.color='';status.textContent='Waiting for the authenticator…';
   try{
-    await pkRegisterCeremony(label);
-    st.textContent=`"${label}" 등록 완료`; st.style.color='var(--ok)';
-    $('#pklabel').value=''; pkList();
-  }catch(e){ st.textContent=pkError(e); st.style.color='var(--bad)' }
-  finally{ b.disabled=false }
+    await pkRegisterCeremony(label);status.textContent=`Registered "${label}"`;status.style.color='var(--ok)';
+    $('#pklabel').value='';await pkList();
+  }catch(error){status.textContent=pkError(error);status.style.color='var(--bad)'}
+  finally{button.disabled=false}
 }
-
-async function pkLogin(){
-  const el=$('#lerr'), b=$('#pklogin');
-  el.classList.add('hide'); b.disabled=true;
-  try{ await pkLoginCeremony(); await refresh() }
-  catch(e){ el.textContent=pkError(e); el.classList.remove('hide') }
-  finally{ b.disabled=false }
-}
-
 async function pkList(){
-  const d=await api('/admin/api/passkey/list');
-  $('#rpid').textContent=d.rpid;
-  const rows=d.passkeys||[];
-  $('#pklist').innerHTML=rows.length?rows.map(k=>`
-    <tr>
-      <td><b>${k.label}</b></td>
-      <td class="note mono">${k.rpid}${k.current_domain?'':' <span class="pill s-missing">다른 도메인</span>'}</td>
-      <td class="note">${new Date(k.created).toLocaleDateString()}</td>
-      <td class="note">${k.last_used?new Date(k.last_used).toLocaleString()+` (${k.uses}회)`:'미사용'}</td>
-      <td><button class="del" data-pkdel="${k.id}" data-pkrp="${k.rpid}">삭제</button></td>
+  if(!authed)return;
+  const data=await api('/admin/api/passkey/list');
+  $('#rpid').textContent=data.rpid;
+  const rows=data.passkeys||[];
+  $('#pklist').innerHTML=rows.length?rows.map(key=>`<tr>
+      <td><b>${esc(key.label)}</b></td>
+      <td class="note mono">${esc(key.rpid)}${key.current_domain?'':' <span class="pill s-missing">Other domain</span>'}</td>
+      <td class="note">${new Date(key.created).toLocaleDateString()}</td>
+      <td class="note">${key.last_used?`${new Date(key.last_used).toLocaleString()} (${key.uses} uses)`:'Never'}</td>
+      <td><button class="del" data-pkdel="${esc(key.id)}" data-pkrp="${esc(key.rpid)}">Delete</button></td>
     </tr>`).join('')
-    : '<tr><td colspan="5" class="note">등록된 패스키가 없습니다. 아래에서 추가하세요.</td></tr>';
+    : '<tr><td colspan="5" class="note">No passkeys are registered. Add one below.</td></tr>';
 }
-
 $('#pkadd').onclick=pkRegister;
-$('#pklogin').onclick=pkLogin;
-$('#pklabel').addEventListener('keydown',e=>{if(e.key==='Enter')pkRegister()});
-document.addEventListener('click',async e=>{
-  const t=e.target.closest('[data-pkdel]'); if(!t)return;
-  if(!confirm('이 패스키를 삭제할까요?'))return;
+$('#pklabel').addEventListener('keydown',event=>{if(event.key==='Enter')pkRegister()});
+document.addEventListener('click',async event=>{
+  const target=event.target.closest('[data-pkdel]');if(!target)return;
+  if(!confirm('Delete this passkey?'))return;
   try{
     await api('/admin/api/passkey/delete',{method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({id:t.dataset.pkdel,rpid:t.dataset.pkrp})});
-    pkList();
-  }catch(err){$('#pkstat').textContent=err.message;$('#pkstat').style.color='var(--bad)'}
+      body:JSON.stringify({id:target.dataset.pkdel,rpid:target.dataset.pkrp})});
+    await pkList();
+  }catch(error){$('#pkstat').textContent=error.message;$('#pkstat').style.color='var(--bad)'}
 });
 
 // ---- bake ----
-let poll;
 $('#bake').onclick=async()=>{
-  $('#bake').disabled=true; $('#bstat').textContent='실행 중...'; $('#blog').classList.remove('hide');
-  try{ await api('/admin/api/bake',{method:'POST'}); }
-  catch(e){ $('#bstat').textContent=e.message; $('#bake').disabled=false; return }
-  clearInterval(poll);
-  poll=setInterval(async()=>{
-    const d=await api('/admin/api/bake-status');
-    // Strip ANSI so the log stays readable in a plain <pre>.
-    $('#blog').textContent=(d.log||[]).join('\n').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'');
-    $('#blog').scrollTop=$('#blog').scrollHeight;
-    if(!d.running){
-      clearInterval(poll); $('#bake').disabled=false;
-      $('#bstat').textContent=d.error?('실패: '+d.error):'완료';
-      $('#bstat').style.color=d.error?'var(--bad)':'var(--ok)';
-      refresh();
-    }
+  $('#bake').disabled=true;$('#bstat').textContent='Running…';$('#blog').classList.remove('hide');
+  try{await api('/admin/api/bake',{method:'POST'})}
+  catch(error){$('#bstat').textContent=error.message;$('#bake').disabled=false;return}
+  clearInterval(bakePoll);
+  bakePoll=setInterval(async()=>{
+    try{
+      const data=await api('/admin/api/bake-status');
+      $('#blog').textContent=(data.log||[]).join('\n').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g,'');
+      $('#blog').scrollTop=$('#blog').scrollHeight;
+      if(!data.running){
+        clearInterval(bakePoll);$('#bake').disabled=false;
+        $('#bstat').textContent=data.error?'Failed: '+data.error:'Complete';
+        $('#bstat').style.color=data.error?'var(--bad)':'var(--ok)';
+        await refreshData();
+      }
+    }catch(error){if(error.status===401){clearInterval(bakePoll);checkSession().catch(()=>{})}}
   },1200);
 };
 
-refresh().catch(()=>{$('#gate').classList.remove('hide')});
-setInterval(()=>{if(!$('#app').classList.contains('hide'))refresh().catch(()=>{})},60000);
+authChannel?.addEventListener('message',()=>checkSession().catch(()=>{}));
+addEventListener('focus',()=>checkSession().catch(()=>{}));
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkSession().catch(()=>{})});
+setInterval(()=>checkSession().catch(()=>{}),1000);
+setInterval(()=>{if(authed)refreshData().catch(handleAPIError)},60000);
+checkSession().catch(()=>{if(!authKnown)setAuth(false)});
 </script>
 </body>
 </html>

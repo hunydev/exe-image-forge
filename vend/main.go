@@ -619,6 +619,7 @@ func main() {
 	mux.HandleFunc("/v2/", s.handleV2)
 	mux.HandleFunc("/api/grant", s.handleGrant)
 	mux.HandleFunc("/api/creds", a.handleCreds)
+	mux.HandleFunc("/api/session", a.handleSession)
 	mux.HandleFunc("/admin/api/login", a.handleLogin)
 	mux.HandleFunc("/admin/api/logout", a.handleLogout)
 	// Passkey login needs no prior session; everything else does.
@@ -642,6 +643,7 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
 		w.Write(adminHTML)
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
@@ -687,6 +689,7 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
 		w.Write(indexHTML)
 	})
 
@@ -703,9 +706,9 @@ func (s *server) repoInfo() []map[string]any {
 	out := make([]map[string]any, 0, len(s.cfg.Repos))
 	for _, r := range s.cfg.Repos {
 		baked := strings.HasSuffix(r, "/dev")
-		label, note := r+" (자격증명 없음)", "도구만 설치됨 · 직접 로그인 필요"
+		label, note := r+" (no credentials)", "Tools only; sign in manually"
 		if baked {
-			label, note = r+" (로그인 됨)", "codex · claude · gemini · gh 인증 포함"
+			label, note = r+" (signed in)", "Includes Codex, Claude, Gemini, and GitHub credentials"
 		}
 		out = append(out, map[string]any{
 			"name": r, "label": label, "note": note, "baked": baked,

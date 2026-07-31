@@ -241,12 +241,12 @@ func (a *admin) handlePasskeyRegisterFinish(w http.ResponseWriter, r *http.Reque
 	a.regSession = nil
 	a.mu.Unlock()
 	if sd == nil || sdRP != rpid {
-		http.Error(w, "등록 세션이 없습니다. 다시 시도하세요", 400)
+		http.Error(w, "registration session is missing; try again", 400)
 		return
 	}
 	cred, err := wa.FinishRegistration(a.userFor(rpid), *sd, r)
 	if err != nil {
-		http.Error(w, "등록 실패: "+err.Error(), 400)
+		http.Error(w, "registration failed: "+err.Error(), 400)
 		return
 	}
 	a.pk.add(&Passkey{Label: label, RPID: rpid, Credential: *cred, Created: time.Now()})
@@ -264,7 +264,7 @@ func (a *admin) handlePasskeyLoginBegin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if len(a.pk.forRP(rpid)) == 0 {
-		http.Error(w, "이 도메인에 등록된 패스키가 없습니다", 404)
+		http.Error(w, "no passkey is registered for this domain", 404)
 		return
 	}
 	assertion, sd, err := wa.BeginDiscoverableLogin()
@@ -291,7 +291,7 @@ func (a *admin) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request)
 	a.loginSession = nil
 	a.mu.Unlock()
 	if sd == nil || sdRP != rpid {
-		http.Error(w, "로그인 세션이 없습니다. 다시 시도하세요", 400)
+		http.Error(w, "login session is missing; try again", 400)
 		return
 	}
 
@@ -324,12 +324,12 @@ func (a *admin) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request)
 		}
 		a.srv.mu.Unlock()
 		log.Printf("passkey login failed on %s: %v", rpid, err)
-		http.Error(w, "인증 실패: "+err.Error(), 403)
+		http.Error(w, "authentication failed: "+err.Error(), 403)
 		return
 	}
 	if cred.Authenticator.CloneWarning {
 		log.Printf("passkey clone warning on %s; refusing", rpid)
-		http.Error(w, "복제된 인증기로 판단되어 거부했습니다", 403)
+		http.Error(w, "authenticator clone warning; request refused", 403)
 		return
 	}
 	a.srv.mu.Lock()
@@ -403,7 +403,7 @@ func (a *admin) handlePasskeyDelete(w http.ResponseWriter, r *http.Request) {
 		_, rpid, _ = a.rpFor(r)
 	}
 	if !a.pk.remove(rpid, req.ID) {
-		http.Error(w, "패스키를 찾을 수 없습니다", 404)
+		http.Error(w, "passkey not found", 404)
 		return
 	}
 	log.Printf("passkey removed on %s", rpid)

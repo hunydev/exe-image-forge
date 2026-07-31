@@ -18,9 +18,9 @@ function pkSupported() {
 
 // pkError turns the browser's opaque failures into something a human can act on.
 function pkError(e) {
-  if (e && e.name === 'NotAllowedError') return '취소되었거나 시간이 초과되었습니다';
-  if (e && e.name === 'InvalidStateError') return '이 기기에는 이미 패스키가 등록되어 있습니다';
-  if (e && e.name === 'SecurityError') return '보안 컨텍스트(HTTPS)가 아니어서 패스키를 쓸 수 없습니다';
+  if (e && e.name === 'NotAllowedError') return 'The request was cancelled or timed out';
+  if (e && e.name === 'InvalidStateError') return 'A passkey is already registered on this device';
+  if (e && e.name === 'SecurityError') return 'Passkeys require a secure HTTPS context';
   return String((e && e.message) || e).trim();
 }
 
