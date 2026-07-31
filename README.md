@@ -217,3 +217,23 @@ hunyimg versions [image]            구성별 도구 버전
 hunyimg context [variant]   # AI CLI 가 읽게 될 내용 확인
 ```
 관리 페이지의 "AI 에이전트 컨텍스트" 카드에서 구성별로 확인할 수 있습니다.
+
+
+## 로그인 명령 주의
+
+| CLI | 명령 | 비고 |
+|---|---|---|
+| gh | `gh auth login --git-protocol https` | device code |
+| codex | `codex login --device-auth` | device code |
+| claude | **`claude auth login`** | platform.claude.com 리다이렉트 + 코드 붙여넣기 |
+| gemini | `gemini` | localhost 콜백 → 릴레이 필요 |
+
+**`claude setup-token` 을 쓰면 안 됩니다.** 이 명령은 토큰을 화면에 출력만 하고
+(`export CLAUDE_CODE_OAUTH_TOKEN=<token>` 용) 디스크에 아무것도 저장하지 않습니다.
+로그인은 성공한 것처럼 보이지만 `~/.claude/.credentials.json` 이 생기지 않아 웹 UI 가
+계속 "로그인 안 됨" 으로 표시하고, bake 해도 자격증명이 들어가지 않습니다.
+자격증명을 실제로 저장하는 것은 `claude auth login` 입니다.
+
+관리 터미널과 `hunyimg auth` 는 **`hunydev/base:go-gemini`** 에서 실행됩니다.
+기본 구성(`min`)에는 gemini 가 없어서 로그인 셸에서 `gemini: command not found` 가 납니다.
+자격증명은 구성과 무관하게 `$AUTHHOME` 하나에 모입니다.

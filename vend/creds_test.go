@@ -257,7 +257,7 @@ func TestLoginCommandsAreHeadless(t *testing.T) {
 	want := map[string]string{
 		"gh":     "gh auth login --git-protocol https",
 		"codex":  "codex login --device-auth",
-		"claude": "claude setup-token",
+		"claude": "claude auth login",
 		"gemini": "gemini",
 	}
 	for _, c := range creds {
@@ -270,6 +270,33 @@ func TestLoginCommandsAreHeadless(t *testing.T) {
 		if (c.Tool == "gemini") != c.NeedsRelay {
 			t.Errorf("%s: needs_relay = %v", c.Tool, c.NeedsRelay)
 		}
+	}
+
+	// `claude setup-token` only prints a token to export; it writes nothing to
+	// disk, so a user who ran it saw "success" while the UI kept reporting the
+	// credential as missing. The login command must be one that persists.
+	for _, c := range creds {
+		if c.Tool == "claude" && strings.Contains(c.LoginCmd, "setup-token") {
+			t.Error("claude login_cmd is setup-token, which does not persist " +
+				"credentials; the UI would never see the login")
+		}
+	}
+}
+
+// The admin terminal exists to log the CLIs in, so it must run an image that
+// actually contains all of them. The lean default variant does not.
+func TestTerminalUsesTheFullestVariant(t *testing.T) {
+	b, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	if !strings.Contains(src, "termImage()") {
+		t.Fatal("terminal does not select its image explicitly")
+	}
+	if !strings.Contains(src, `"hunydev/base:go-gemini"`) {
+		t.Error("terminal image does not prefer the variant containing every " +
+			"CLI; `gemini` would be command-not-found in the login shell")
 	}
 }
 
@@ -514,6 +541,44 @@ func TestBakeDoesNotClobberAgentContext(t *testing.T) {
 		if !strings.Contains(src, "--exclude="+f) {
 			t.Errorf("bake does not exclude %s; the baked image would carry a "+
 				"context file describing a different variant", f)
+		}
+	}
+}
+
+// Credential detection must not depend solely on a private file layout. When
+// the file is absent or unrecognised, the CLI's own status command is the
+// authority; without this a successful login can read as "missing" forever.
+func TestClaudeDetectionFallsBackToTheCLI(t *testing.T) {
+	b, err := os.ReadFile("creds.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	if !strings.Contains(src, "claudeAuthStatus") {
+		t.Fatal("no fallback to `claude auth status`")
+	}
+	if !strings.Contains(src, `"auth", "status", "--json"`) {
+		t.Error("fallback does not use the machine-readable status output")
+	}
+	// The fallback must only run when the file check came up empty, or every
+	// page load would pay for a container start.
+	i := strings.Index(src, `if cl.State == "missing" {`)
+	j := strings.Index(src, "claudeAuthStatus(home)")
+	if i < 0 || j < 0 || j < i {
+		t.Error("fallback is not gated on the file check having failed")
+	}
+}
+
+// The recognised credential file must match where claude actually writes.
+func TestClaudeCredentialPath(t *testing.T) {
+	for _, c := range inspectCreds(t.TempDir()) {
+		if c.Tool != "claude" {
+			continue
+		}
+		if c.File != ".claude/.credentials.json" {
+			t.Errorf("claude credential file = %q; claude writes "+
+				"~/.claude/.credentials.json when libsecret is unavailable, "+
+				"which is the case in this image", c.File)
 		}
 	}
 }

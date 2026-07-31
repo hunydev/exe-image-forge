@@ -88,16 +88,23 @@ cmd_shell(){
 cmd_auth(){
   ensure_authhome
   local tool=${1:-}; shift || true
+  # Log in against the fullest variant: the lean ones omit gemini, and the
+  # credentials land in $AUTHHOME which every variant shares.
+  local img=hunydev/base:go-gemini
+  docker image inspect "$img" >/dev/null 2>&1 || img="$BASE"
   local run=(docker run --rm -it --network host -e HOME=/home/exedev -u 1000:1000
-             -v "$AUTHHOME":/home/exedev -w /home/exedev "$BASE")
+             -v "$AUTHHOME":/home/exedev -w /home/exedev "$img")
   # All of these avoid a localhost OAuth callback, which would land on the
   # user's laptop rather than this VM. gh and codex use device codes; claude
-  # setup-token redirects to platform.claude.com and prints a code to paste.
+  # auth login redirects to platform.claude.com and prints a code to paste.
   # Gemini has no device flow, so it needs the callback relay (see below).
   case "$tool" in
     gh)     "${run[@]}" gh auth login --git-protocol https "$@" ;;
     codex)  "${run[@]}" codex login --device-auth "$@" ;;
-    claude|claude-token) "${run[@]}" claude setup-token ;;
+    # NOT `claude setup-token`: that only prints a token to export and writes
+    # nothing to disk, so the bake would pick up no credentials at all.
+    claude) "${run[@]}" claude auth login "$@" ;;
+    claude-token) "${run[@]}" claude setup-token ;;
     gemini)
       cat <<'EOF'
 Gemini CLI has no device-code flow. After you approve in the browser it will try
@@ -122,8 +129,15 @@ cmd_status(){
     if sudo test -s "$AUTHHOME/$f"; then printf '  \033[32m✓\033[0m %s\n' "$f"; else printf '  \033[31m✗\033[0m %s\n' "$f"; fi
   done
   echo
-  docker run --rm --network host -e HOME=/home/exedev -u 1000:1000 -v "$AUTHHOME":/home/exedev "$BASE" \
-    bash -lc 'echo "-- gh:"; gh auth status 2>&1|sed "s/^/   /"; echo "-- codex:"; codex login status 2>&1|sed "s/^/   /"' || true
+  local img=hunydev/base:go-gemini
+  docker image inspect "$img" >/dev/null 2>&1 || img="$BASE"
+  docker run --rm --network host -e HOME=/home/exedev -u 1000:1000 -v "$AUTHHOME":/home/exedev "$img" \
+    bash -lc '
+      echo "-- gh:";     gh auth status 2>&1|sed "s/^/   /"
+      echo "-- codex:";  codex login status 2>&1|sed "s/^/   /"
+      echo "-- claude:"; claude auth status --text 2>&1|sed "s/^/   /"
+      echo "-- gemini:"; if [ -s ~/.gemini/oauth_creds.json ]; then echo "   logged in"; else echo "   not logged in"; fi
+    ' || true
 }
 
 cmd_bake(){

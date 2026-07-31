@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -146,10 +147,14 @@ func inspectCreds(home string) []Cred {
 	out = append(out, cx)
 
 	// --- claude -----------------------------------------------------
-	// claude: setup-token redirects to platform.claude.com and prints a code to
-	// paste back, so no localhost listener is involved.
+	// `claude auth login` redirects to platform.claude.com and asks for a code
+	// to paste back, so no localhost listener is involved, and unlike
+	// `claude setup-token` it actually persists the credentials. setup-token
+	// only PRINTS a token for you to export as CLAUDE_CODE_OAUTH_TOKEN, which
+	// is why logging in that way appeared to succeed while leaving nothing on
+	// disk for us to find.
 	cl := Cred{Tool: "claude", Name: "Claude Code", File: ".claude/.credentials.json",
-		State: "missing", LoginCmd: "claude setup-token"}
+		State: "missing", LoginCmd: "claude auth login"}
 	var cla struct {
 		OAuth *struct {
 			AccessToken      string `json:"accessToken"`
@@ -167,6 +172,17 @@ func inspectCreds(home string) []Cred {
 			cl.State = "ok"
 		} else {
 			cl.State = "unknown"
+		}
+	}
+	if cl.State == "missing" {
+		// Ask the CLI itself. Parsing a private file format is a guess, and if
+		// claude changes where it stores things we would silently report a
+		// working login as missing; its own status command cannot drift.
+		if st, ok := claudeAuthStatus(home); ok {
+			cl.State = "ok"
+			cl.Detail = st
+			cl.Refreshable = true
+			cl.File = "(claude auth status)"
 		}
 	}
 	out = append(out, cl)
@@ -358,4 +374,69 @@ func (s *server) agentContext(variant string) string {
 		return ""
 	}
 	return string(out)
+}
+
+var (
+	claudeStatusMu   sync.Mutex
+	claudeStatusVal  string
+	claudeStatusOK   bool
+	claudeStatusAt   time.Time
+	claudeStatusTTL  = 60 * time.Second
+	claudeStatusHome string
+)
+
+// claudeAuthStatus asks the claude CLI whether it is logged in, for use when
+// the on-disk credential file is absent or in a format we do not recognise.
+// Returns a human-readable description and whether a login exists.
+//
+// The answer is cached: this starts a container, and the common case (not
+// logged in) would otherwise pay that cost on every page load.
+func claudeAuthStatus(home string) (string, bool) {
+	claudeStatusMu.Lock()
+	if claudeStatusHome == home && time.Since(claudeStatusAt) < claudeStatusTTL {
+		v, ok := claudeStatusVal, claudeStatusOK
+		claudeStatusMu.Unlock()
+		return v, ok
+	}
+	claudeStatusMu.Unlock()
+
+	v, ok := claudeAuthStatusUncached(home)
+
+	claudeStatusMu.Lock()
+	claudeStatusVal, claudeStatusOK = v, ok
+	claudeStatusAt, claudeStatusHome = time.Now(), home
+	claudeStatusMu.Unlock()
+	return v, ok
+}
+
+func claudeAuthStatusUncached(home string) (string, bool) {
+	img := "hunydev/base:go-gemini"
+	if err := exec.Command("docker", "image", "inspect", img).Run(); err != nil {
+		img = "hunydev/base:latest"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "run", "--rm",
+		"--entrypoint", "claude", "--pull", "never",
+		"-e", "HOME=/home/exedev", "-u", "1000:1000",
+		"-v", home+":/home/exedev", img,
+		"auth", "status", "--json").Output()
+	if err != nil {
+		return "", false
+	}
+	var st struct {
+		LoggedIn   bool   `json:"loggedIn"`
+		AuthMethod string `json:"authMethod"`
+		Account    string `json:"account"`
+		Email      string `json:"email"`
+	}
+	if json.Unmarshal(out, &st) != nil || !st.LoggedIn {
+		return "", false
+	}
+	for _, d := range []string{st.Email, st.Account, st.AuthMethod} {
+		if d != "" {
+			return d, true
+		}
+	}
+	return "logged in", true
 }

@@ -279,7 +279,7 @@ func (a *admin) handleTerm(w http.ResponseWriter, r *http.Request) {
 		"-u", "1000:1000",
 		"-v", a.srv.cfg.AuthHome + ":/home/exedev",
 		"-w", "/home/exedev",
-		a.srv.cfg.SourceImage[a.srv.cfg.Repos[0]],
+		a.srv.termImage(),
 		"bash", "-l",
 	}
 	cmd := exec.Command("docker", args...)
@@ -397,6 +397,18 @@ func (a *admin) handleRelay(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"status": resp.StatusCode, "body": string(body),
 	})
+}
+
+// termImage picks the image backing the admin terminal. It must be the fullest
+// variant: this shell exists to log the CLIs in, and the lean variants omit
+// some of them, so using the default would make `gemini` a command-not-found.
+func (s *server) termImage() string {
+	for _, img := range []string{"hunydev/base:go-gemini", "hunydev/base:latest"} {
+		if err := exec.Command("docker", "image", "inspect", img).Run(); err == nil {
+			return img
+		}
+	}
+	return s.cfg.SourceImage[s.cfg.Repos[0]]
 }
 
 // handleContext returns the machine-context block for a variant, so the admin
