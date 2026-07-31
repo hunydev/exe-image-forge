@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Generate the "what is this machine" section for the AI agent CLIs' global
+# instruction files (~/.codex/AGENTS.md, ~/.claude/CLAUDE.md, ~/.gemini/GEMINI.md).
+#
+# The content is written between markers so anything the user adds around it is
+# preserved when this is regenerated. It runs both at image build time and on
+# every boot, because the facts it states (kernel, CPU count, disk size, IP,
+# installed versions) differ between the build host and the VM the image
+# eventually runs on. Stating them once at build time would make the file
+# confidently wrong.
+set -uo pipefail
+
+BEGIN='<!-- BEGIN hunydev machine context (generated; edits inside are overwritten) -->'
+END='<!-- END hunydev machine context -->'
+
+have(){ command -v "$1" >/dev/null 2>&1; }
+ver(){ have "$1" && "$@" 2>/dev/null | head -1 || return 1; }
+
+# --- collect facts -------------------------------------------------------
+os=$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME")
+kernel=$(uname -r)
+arch=$(uname -m)
+cpus=$(nproc 2>/dev/null || echo '?')
+mem=$(awk '/MemTotal/{printf "%.1fGB", $2/1048576}' /proc/meminfo 2>/dev/null || echo '?')
+disk=$(df -h / 2>/dev/null | awk 'NR==2{print $2" total, "$4" free"}')
+
+# Only list what is actually present: the image ships in several variants and
+# claiming a missing toolchain exists is worse than staying silent, since the
+# agent would plan around a tool that is not there.
+tools=""
+add(){ tools+="- $1"$'\n'; }
+have node    && add "Node.js $(node --version 2>/dev/null) — \`node\`, \`npm\` $(npm --version 2>/dev/null), \`npx\`"
+have python3 && add "$(python3 --version 2>/dev/null) — \`python3\`/\`python\`, \`pip\`, \`venv\`, \`pipx\`"
+have uv      && add "uv $(uv --version 2>/dev/null | awk '{print $2}') — \`uv\`, \`uvx\` (fast Python package/tool runner)"
+have go      && add "Go $(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//') — \`go\`, \`gofmt\`"
+have gh      && add "GitHub CLI $(gh --version 2>/dev/null | head -1 | awk '{print $3}') — \`gh\` (pre-authenticated)"
+have git     && add "git $(git --version 2>/dev/null | awk '{print $3}')"
+have gcc     && add "build-essential — \`gcc\`, \`g++\`, \`make\`, \`pkg-config\` (cgo and native npm modules work)"
+have docker  && add "Docker — \`docker\`"
+
+agents=""
+have codex  && agents+="- \`codex\` $(codex --version 2>/dev/null | grep -oE '[0-9.]+' | head -1) (OpenAI Codex CLI)"$'\n'
+have claude && agents+="- \`claude\` $(claude --version 2>/dev/null | grep -oE '[0-9.]+' | head -1) (Claude Code)"$'\n'
+have gemini && agents+="- \`gemini\` $(gemini --version 2>/dev/null | head -1) (Gemini CLI)"$'\n'
+
+# Absent optional components are worth naming explicitly: without this the
+# agent may waste a turn discovering that `go` is missing, or worse, assume the
+# command failed for some other reason.
+missing=""
+have go     || missing+="\`go\` (Go toolchain), "
+have gemini || missing+="\`gemini\` (Gemini CLI), "
+missing=${missing%, }
+
+variant=$(cat /etc/hunydev-variant 2>/dev/null || echo unknown)
+
+# --- render --------------------------------------------------------------
+render(){
+cat <<MD
+$BEGIN
+## This machine
+
+You are running on an **exe.dev VM** built from the \`hunydev\` custom image
+(variant \`$variant\`). This section is generated at boot; it describes the
+machine you are actually on, so prefer it over assumptions.
+
+**System**: $os · kernel $kernel · $arch · ${cpus} vCPU · ${mem} RAM · disk: ${disk}
+**User**: \`exedev\` (uid 1000), passwordless \`sudo\`, home \`/home/exedev\`
+**Init**: systemd. Use \`systemctl\` / \`journalctl\` normally.
+
+### Installed toolchains
+$tools
+### AI agent CLIs (all pre-authenticated in this image)
+$agents
+MD
+
+if [ -n "$missing" ]; then
+cat <<MD
+### Not installed
+$missing — this image variant was built without them. Do not plan around them.
+If genuinely needed, request an image variant that includes them rather than
+installing by hand: hand-installed tools are lost when the VM is recreated.
+
+MD
+fi
+
+cat <<MD
+### Networking
+Only **HTTPS** is exposed, through the exe.dev proxy. Bind services to
+\`localhost:<port>\`; the owner reaches them at \`https://<vm>.exe.xyz\` (port 8000)
+or \`https://<vm>.exe.xyz:<port>\` for ports 3000-9999. There is no inbound
+plain HTTP and no arbitrary TCP.
+
+Because of that, **OAuth flows that redirect to \`http://localhost:<port>\` do not
+work from a browser on another machine.** Prefer the headless variants:
+\`codex login --device-auth\`, \`claude setup-token\`, \`gh auth login\` (device code).
+
+### Conventions
+- Credentials for the AI CLIs and \`gh\` are already baked in — do not re-authenticate
+  unless a command reports an expired token.
+- The AI CLIs update themselves daily via \`ai-cli-update.timer\`; do not upgrade them by hand.
+- Prefer \`uv\`/\`uvx\` over \`pip install\` for Python tools.
+- \`rg\` (ripgrep), \`jq\`, \`sqlite3\`, \`tree\` are available.
+$END
+MD
+}
+
+block=$(render)
+
+# --- write, preserving anything outside the markers ----------------------
+install_into(){
+  local f="$1" dir
+  dir=$(dirname "$f")
+  mkdir -p "$dir" 2>/dev/null || return 0
+  if [ -f "$f" ] && grep -qF "$BEGIN" "$f" 2>/dev/null; then
+    # Replace just our block; the user's own notes around it survive.
+    awk -v b="$BEGIN" -v e="$END" -v blk="$block" '
+      index($0,b){print blk; skip=1; next}
+      index($0,e){skip=0; next}
+      !skip{print}
+    ' "$f" > "$f.tmp" && mv -f "$f.tmp" "$f"
+  else
+    {
+      printf '%s\n' "$block"
+      if [ -s "$f" ]; then echo; cat "$f"; fi
+    } > "$f.tmp" && mv -f "$f.tmp" "$f"
+  fi
+  chown "$(stat -c '%u:%g' "$dir")" "$f" 2>/dev/null || true
+}
+
+HOMEDIR="${TARGET_HOME:-/home/exedev}"
+install_into "$HOMEDIR/.codex/AGENTS.md"
+install_into "$HOMEDIR/.claude/CLAUDE.md"
+install_into "$HOMEDIR/.gemini/GEMINI.md"
+
+echo "wrote machine context to $HOMEDIR/{.codex/AGENTS.md,.claude/CLAUDE.md,.gemini/GEMINI.md}"

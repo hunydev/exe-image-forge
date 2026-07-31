@@ -433,3 +433,87 @@ func TestUpdaterDoesNotReinstateOmittedComponents(t *testing.T) {
 			"that deliberately excluded it")
 	}
 }
+
+// The machine-context files are what make an agent aware of this VM. Getting
+// the paths wrong means the file is written but never read, which is silent.
+func TestAgentContextTargetsTheDocumentedGlobalPaths(t *testing.T) {
+	b, err := os.ReadFile("../image/files/write-agent-context")
+	if err != nil {
+		t.Skipf("script not readable: %v", err)
+	}
+	src := string(b)
+	// These are each CLI's documented global instruction file.
+	for tool, path := range map[string]string{
+		"codex":  ".codex/AGENTS.md",
+		"claude": ".claude/CLAUDE.md",
+		"gemini": ".gemini/GEMINI.md",
+	} {
+		if !strings.Contains(src, path) {
+			t.Errorf("%s: global instruction file %q is never written", tool, path)
+		}
+	}
+
+	// Content must be delimited so a user's own notes survive regeneration.
+	if !strings.Contains(src, "BEGIN hunydev machine context") ||
+		!strings.Contains(src, "END hunydev machine context") {
+		t.Error("generated block is not delimited by markers; regeneration would " +
+			"destroy anything the user added to these files")
+	}
+
+	// Optional components must be reported conditionally. A static list would
+	// claim go/gemini exist in the min variant.
+	for _, guard := range []string{"have go ", "have gemini "} {
+		if !strings.Contains(src, guard) {
+			t.Errorf("no presence check %q; the context would lie about lean variants", guard)
+		}
+	}
+}
+
+// The context must be regenerated on the VM, not frozen at build time: the
+// facts it states belong to the running machine.
+func TestAgentContextRegeneratesAtBoot(t *testing.T) {
+	unit, err := os.ReadFile("../image/files/agent-context.service")
+	if err != nil {
+		t.Skipf("unit not readable: %v", err)
+	}
+	u := string(unit)
+	if !strings.Contains(u, "WantedBy=multi-user.target") {
+		t.Error("service is not wired into boot")
+	}
+	// ConditionPathExists / ConditionFirstBoot would make it run only once,
+	// leaving later boots describing the build host.
+	if strings.Contains(u, "ConditionFirstBoot") {
+		t.Error("service is limited to first boot; later boots would keep stale facts")
+	}
+	if !strings.Contains(u, "SuccessExitStatus=0 1") {
+		t.Error("a failure writing a documentation file should not degrade boot")
+	}
+
+	df, err := os.ReadFile("../image/Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(df), "systemctl enable agent-context.service") {
+		t.Error("agent-context.service is never enabled in the image")
+	}
+	// The variant name must be recorded for the context to report it.
+	if !strings.Contains(string(df), "/etc/hunydev-variant") {
+		t.Error("variant is not recorded, so the context cannot name it")
+	}
+}
+
+// Baking credentials must not overlay the per-variant context files, or every
+// variant would inherit whichever one seeded the auth home.
+func TestBakeDoesNotClobberAgentContext(t *testing.T) {
+	b, err := os.ReadFile("../hunyimg")
+	if err != nil {
+		t.Skipf("hunyimg not readable: %v", err)
+	}
+	src := string(b)
+	for _, f := range []string{".codex/AGENTS.md", ".claude/CLAUDE.md", ".gemini/GEMINI.md"} {
+		if !strings.Contains(src, "--exclude="+f) {
+			t.Errorf("bake does not exclude %s; the baked image would carry a "+
+				"context file describing a different variant", f)
+		}
+	}
+}

@@ -52,7 +52,7 @@ cmd_build(){
     [ -n "$only" ] && [ "$only" != "$v" ] && continue
     log "building hunydev/base:$v"
     # shellcheck disable=SC2046
-    docker build "${args[@]}" $(variant_args "$v") \
+    docker build "${args[@]}" $(variant_args "$v") --build-arg "VARIANT=$v" \
       -t "hunydev/base:$v" -f "$ROOT/image/Dockerfile" "$ROOT/image"
   done
 
@@ -133,6 +133,7 @@ cmd_bake(){
   trap 'sudo rm -rf "${CTX:-/nonexistent}"' EXIT
   sudo tar -C "$AUTHHOME" -cf "$CTX/home.tar" \
     --exclude=.cache --exclude=.npm --exclude=.local/share/claude \
+    --exclude=.codex/AGENTS.md --exclude=.claude/CLAUDE.md --exclude=.gemini/GEMINI.md \
     --exclude='*.log' --exclude=.bash_history . 2>/dev/null || true
   sudo chown "$(id -u):$(id -g)" "$CTX/home.tar"
   local stamp; stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -301,6 +302,14 @@ cmd_versions(){
   done
 }
 
+# cmd_context shows the machine-context block the AI CLIs will read.
+cmd_context(){
+  local v="${1:-min}"
+  docker image inspect "hunydev/base:$v" >/dev/null 2>&1 || die "variant '$v' not built"
+  log "AI agent context in hunydev/base:$v (~/.codex/AGENTS.md, .claude/CLAUDE.md, .gemini/GEMINI.md)"
+  docker run --rm --entrypoint cat "hunydev/base:$v" /home/exedev/.codex/AGENTS.md
+}
+
 cmd_gc(){
   log "pruning dangling images and registry garbage"
   docker image prune -f
@@ -314,6 +323,7 @@ cmd_gc(){
 case "${1:-help}" in
   build) shift; cmd_build "$@" ;;
   sizes) shift; cmd_sizes "$@" ;;
+  context) shift; cmd_context "$@" ;;
   refresh) shift; cmd_refresh "$@" ;;
   versions) shift; cmd_versions "$@" ;;
   shell) shift; cmd_shell "$@" ;;
@@ -336,6 +346,7 @@ hunyimg - custom exe.dev image builder + time-limited image vending
   hunyimg sizes          show the size of each variant
   hunyimg refresh        update AI CLIs, rebuild base, re-bake dev (run by timer)
   hunyimg versions [img] show the tool versions baked into an image
+  hunyimg context [var]  show the machine context the AI CLIs will read
   hunyimg auth <tool>    log in inside the image: gh | codex | claude | gemini | all
   hunyimg relay <url>    replay a gemini localhost OAuth callback from the VM
   hunyimg import [file]  import credentials from a tar (stdin by default)

@@ -552,6 +552,7 @@ func main() {
 	mux.HandleFunc("/admin/api/passkey/login/finish", a.handlePasskeyLoginFinish)
 	mux.HandleFunc("/admin/api/passkey/register/begin", a.require(a.handlePasskeyRegisterBegin))
 	mux.HandleFunc("/admin/api/passkey/register/finish", a.require(a.handlePasskeyRegisterFinish))
+	mux.HandleFunc("/admin/api/context", a.require(a.handleContext))
 	mux.HandleFunc("/admin/api/passkey/list", a.require(a.handlePasskeyList))
 	mux.HandleFunc("/admin/api/passkey/delete", a.require(a.handlePasskeyDelete))
 	mux.HandleFunc("/admin/api/bake", a.require(a.handleBake))

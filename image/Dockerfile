@@ -103,12 +103,17 @@ RUN chmod 644 /etc/systemd/system/shelley.socket /etc/systemd/system/shelley.ser
 # the update path is exercised on every build.
 COPY files/update-ai-clis /usr/local/bin/update-ai-clis
 COPY files/write-versions /usr/local/bin/write-versions
+COPY files/write-agent-context /usr/local/bin/write-agent-context
+COPY files/agent-context.service /etc/systemd/system/agent-context.service
 COPY files/ai-cli-update.service /etc/systemd/system/ai-cli-update.service
 COPY files/ai-cli-update.timer /etc/systemd/system/ai-cli-update.timer
 # CLI_REFRESH busts the layer cache when we want fresh CLI versions without
 # rebuilding the (slow, stable) layers underneath.
 ARG CLI_REFRESH=0
-RUN chmod 755 /usr/local/bin/update-ai-clis /usr/local/bin/write-versions && \
+RUN chmod 755 /usr/local/bin/update-ai-clis /usr/local/bin/write-versions \
+        /usr/local/bin/write-agent-context && \
+    chmod 644 /etc/systemd/system/agent-context.service && \
+    systemctl enable agent-context.service && \
     chmod 644 /etc/systemd/system/ai-cli-update.service /etc/systemd/system/ai-cli-update.timer && \
     systemctl enable ai-cli-update.timer && \
     echo "refresh=${CLI_REFRESH}" && \
@@ -140,7 +145,11 @@ RUN if [ "$WITH_GO" = "1" ]; then \
 
 
 # Record the final tool set, now that the optional pieces are decided.
-RUN /usr/local/bin/write-versions && cat /etc/ai-cli-versions.json
+ARG VARIANT=min
+RUN echo "$VARIANT" > /etc/hunydev-variant && \
+    /usr/local/bin/write-versions && cat /etc/ai-cli-versions.json && \
+    /usr/local/bin/write-agent-context && \
+    chown -R 1000:1000 /home/exedev/.codex /home/exedev/.claude /home/exedev/.gemini
 
 # --- slimming ------------------------------------------------------------
 # Documentation, changelogs and vim's runtime are dead weight in an image whose

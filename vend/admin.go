@@ -398,3 +398,15 @@ func (a *admin) handleRelay(w http.ResponseWriter, r *http.Request) {
 		"status": resp.StatusCode, "body": string(body),
 	})
 }
+
+// handleContext returns the machine-context block for a variant, so the admin
+// can read exactly what the AI CLIs will be told about this environment.
+func (a *admin) handleContext(w http.ResponseWriter, r *http.Request) {
+	v := r.URL.Query().Get("variant")
+	if v == "" {
+		v = "min"
+	}
+	body := a.srv.agentContext(v)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"variant": v, "context": body})
+}

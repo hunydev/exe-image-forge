@@ -49,6 +49,9 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
 .err{color:var(--bad);font-size:13px;margin-top:10px}
 .sepwrap{display:flex;align-items:center;gap:10px;margin:14px 0;color:var(--mut);font-size:12px}
 .sepwrap::before,.sepwrap::after{content:"";flex:1;height:1px;background:var(--line)}
+.ctx{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:14px;
+  max-height:340px;overflow:auto;font-size:12px;line-height:1.55;white-space:pre-wrap;
+  word-break:break-word;color:var(--mut);margin:0}
 .vgrid{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;align-items:baseline}
 .vk{color:var(--mut)}
 .del{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
@@ -130,6 +133,23 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
   </div>
 
   <div class="card">
+    <h2>AI 에이전트 컨텍스트</h2>
+    <p class="note" style="margin:-4px 0 10px">이미지에 어떤 도구가 있고 어떤 환경인지 각 CLI 의 전역 지침
+      파일(<code>~/.codex/AGENTS.md</code>, <code>~/.claude/CLAUDE.md</code>, <code>~/.gemini/GEMINI.md</code>)에
+      자동으로 기록됩니다. VM 부팅 때마다 다시 생성되므로 커널·CPU·디스크 같은 값이 실제 머신과 일치합니다.
+      구성마다 내용이 다릅니다 — 없는 도구를 있다고 말하지 않습니다.</p>
+    <div class="row" style="margin-bottom:10px">
+      <select id="ctxvar" style="max-width:200px">
+        <option value="min">min (기본)</option>
+        <option value="gemini">+ Gemini</option>
+        <option value="go">+ Go</option>
+        <option value="go-gemini">+ Go + Gemini</option>
+      </select>
+    </div>
+    <pre id="ctxbody" class="ctx">불러오는 중...</pre>
+  </div>
+
+  <div class="card">
     <h2>패스키 (WebAuthn)</h2>
     <p class="note" style="margin:-4px 0 12px">패스키는 등록한 도메인에만 유효합니다. 지금 접속한 도메인:
       <code id="rpid">-</code>. 다른 도메인(예: <code>images.huny.dev</code>)에서도 쓰려면 그 도메인으로 접속해
@@ -185,6 +205,7 @@ async function refresh(){
   $('#gate').classList.add('hide');$('#app').classList.remove('hide');
   $('#bakedat').textContent=d.baked?new Date(d.baked).toLocaleString():'없음';
   pkList().catch(()=>{});
+  loadCtx();
   fetch('/api/info').then(r=>r.json()).then(i=>{
     const V=i.variants||{}, label={min:'min (기본)',gemini:'+ Gemini',go:'+ Go','go-gemini':'+ Go + Gemini'};
     $('#varsizes').innerHTML=`<div class="vgrid">`+['min','gemini','go','go-gemini'].map(k=>
@@ -288,6 +309,17 @@ function maybeOpenRelay(creds){
   if(g&&g.needs_relay&&(g.state==='missing'||g.state==='expired'))$('#relaybox').open=true;
 }
 
+
+// ---- agent context ----
+async function loadCtx(){
+  const v=$('#ctxvar').value;
+  $('#ctxbody').textContent='불러오는 중...';
+  try{
+    const d=await api('/admin/api/context?variant='+encodeURIComponent(v));
+    $('#ctxbody').textContent=d.context||`'${v}' 구성이 아직 빌드되지 않았습니다.`;
+  }catch(e){ $('#ctxbody').textContent=e.message }
+}
+$('#ctxvar').onchange=loadCtx;
 
 // ---- passkeys (WebAuthn) ----
 // Ceremony helpers live in /passkey.js, shared with the vending page.

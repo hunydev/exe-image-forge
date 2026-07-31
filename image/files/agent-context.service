@@ -1,0 +1,19 @@
+[Unit]
+Description=Refresh AI agent machine context files
+Documentation=https://github.com/hunydev
+After=local-fs.target
+# Runs on every boot, not just the first: the facts it records (kernel, vCPU
+# count, disk size, tool versions) belong to the VM this image was booted on,
+# not the host it was built on, and the CLIs update themselves daily.
+Before=shelley.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/write-agent-context
+RemainAfterExit=yes
+# Never block boot over a documentation file.
+SuccessExitStatus=0 1
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -334,3 +334,28 @@ func (s *server) variants() map[string]variantInfo {
 	s.verMu.Unlock()
 	return out
 }
+
+// agentContext returns the machine-context block baked into an image variant,
+// so the admin page can show exactly what the AI CLIs will be told.
+func (s *server) agentContext(variant string) string {
+	if variant == "" {
+		variant = "min"
+	}
+	valid := false
+	for _, v := range variantNames {
+		if v == variant {
+			valid = true
+		}
+	}
+	if !valid {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "cat",
+		"hunydev/base:"+variant, "/home/exedev/.codex/AGENTS.md").Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
