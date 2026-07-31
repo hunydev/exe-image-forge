@@ -63,6 +63,16 @@ type server struct {
 	statePath string
 	registry  *httputil.ReverseProxy
 
+	// sessionAuthed reports whether the request carries a valid admin session.
+	// Set by the admin wiring; kept as a func to avoid an import cycle of
+	// responsibilities between the vending and admin halves.
+	sessionAuthed func(*http.Request) bool
+
+	// Tool versions are read out of the image, which is slow, so cache them.
+	verMu    sync.Mutex
+	verCache map[string]string
+	verAt    time.Time
+
 	mu      sync.Mutex
 	byToken map[string]*Grant
 	fails   int
@@ -260,7 +270,13 @@ func (s *server) handleGrant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("too many attempts, retry in %ds", wait), 429)
 		return
 	}
-	ok := subtle.ConstantTimeCompare([]byte(hashPassword(req.Password, s.cfg.Salt)), []byte(s.cfg.Hash)) == 1
+	// A passkey session is as good as the password here: it was established by
+	// a stronger authentication, so requiring the password again would be
+	// theatre. Checked first so an empty password field is not penalised.
+	ok := s.sessionAuthed != nil && s.sessionAuthed(r)
+	if !ok {
+		ok = subtle.ConstantTimeCompare([]byte(hashPassword(req.Password, s.cfg.Salt)), []byte(s.cfg.Hash)) == 1
+	}
 	if !ok {
 		s.fails++
 		if s.fails >= 5 {
@@ -485,6 +501,7 @@ func main() {
 		sessions: map[string]*session{},
 		pk:       loadPasskeyStore(cfg.PasskeyFile),
 	}
+	s.sessionAuthed = a.authed
 	mux.HandleFunc("/v2/", s.handleV2)
 	mux.HandleFunc("/api/grant", s.handleGrant)
 	mux.HandleFunc("/api/creds", a.handleCreds)
@@ -513,6 +530,10 @@ func main() {
 		w.Write(adminHTML)
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
+	mux.HandleFunc("/passkey.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Write(passkeyJS)
+	})
 	mux.HandleFunc("/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
 		w.Header().Set("Cache-Control", "public, max-age=86400")

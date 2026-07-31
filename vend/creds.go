@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -223,4 +225,42 @@ func summarize(creds []Cred) []string {
 		warn = append(warn, fmt.Sprintf("액세스 토큰 만료 — 첫 실행 시 자동 갱신됩니다: %s", strings.Join(stale, ", ")))
 	}
 	return warn
+}
+
+// toolVersions reads the version manifest baked into an image by the
+// update-ai-clis script. Reading a file beats running four CLIs, each of which
+// can take seconds to start.
+func (s *server) toolVersions() map[string]string {
+	img := s.cfg.DevImage
+	if img == "" {
+		return nil
+	}
+	s.verMu.Lock()
+	if s.verCache != nil && time.Since(s.verAt) < 5*time.Minute {
+		v := s.verCache
+		s.verMu.Unlock()
+		return v
+	}
+	s.verMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "cat",
+		img, "/etc/ai-cli-versions.json").Output()
+	if err != nil {
+		// Fall back to the base image: dev may not have been baked yet.
+		out, err = exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "cat",
+			"hunydev/base:latest", "/etc/ai-cli-versions.json").Output()
+		if err != nil {
+			return nil
+		}
+	}
+	var v map[string]string
+	if err := json.Unmarshal(out, &v); err != nil {
+		return nil
+	}
+	s.verMu.Lock()
+	s.verCache, s.verAt = v, time.Now()
+	s.verMu.Unlock()
+	return v
 }

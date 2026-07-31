@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly refresh of hunydev images
+
+[Timer]
+# Weekly rather than daily: a rebuild pushes new layers and burns disk, and the
+# in-VM ai-cli-update.timer already keeps running VMs current between refreshes.
+OnCalendar=Sun 04:00
+RandomizedDelaySec=2h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

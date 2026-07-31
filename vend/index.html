@@ -27,7 +27,7 @@ pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12
 .cp:hover{color:var(--fg);border-color:var(--acc)}
 .err{color:#f85149;font-size:13px;margin-top:12px}
 .exp{color:var(--ok);font-size:13px;font-weight:600}
-.hide{display:none}
+.hide{display:none !important}
 .banner{border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13.5px}
 .banner b{display:block;margin-bottom:3px}
 .b-warn{background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.4)}
@@ -37,6 +37,12 @@ pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12
 .topbar .sp{flex:1}
 .topbar a{color:var(--mut);font-size:13px;text-decoration:none}
 .topbar a:hover{color:var(--acc)}
+.pkbtn{margin-top:0;background:transparent;border:1px solid var(--acc);color:var(--acc)}
+.pkbtn:hover{background:var(--acc);color:#fff}
+.sepwrap{display:flex;align-items:center;gap:10px;margin:16px 0 4px;color:var(--mut);font-size:12px}
+.sepwrap::before,.sepwrap::after{content:"";flex:1;height:1px;background:var(--line)}
+.pkok{margin-top:12px;padding:10px 12px;border-radius:8px;font-size:13px;
+  background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.35);color:#7ee787}
 kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px}
 </style>
 </head>
@@ -48,7 +54,12 @@ kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1p
   <div id="banners"></div>
 
   <div class="card" id="login">
-    <div class="f">
+    <div id="pkbox" class="hide">
+      <button id="pklogin" class="pkbtn">🔑 패스키로 로그인</button>
+      <div class="pkok hide" id="pkok">패스키로 인증됨 — 암호 없이 발급할 수 있습니다</div>
+      <div class="sepwrap"><span>또는 암호 사용</span></div>
+    </div>
+    <div class="f" id="pwbox">
       <label for="pw">Password</label>
       <input id="pw" type="password" autocomplete="current-password" autofocus>
     </div>
@@ -68,6 +79,7 @@ kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1p
     <p class="sub" style="margin:0">만료 후 태그와 토큰 경로가 모두 삭제됩니다. 다시 필요하면 <kbd>재발급</kbd>하세요.</p>
   </div>
 </div>
+<script src="/passkey.js"></script>
 <script>
 const $=s=>document.querySelector(s);
 fetch('/api/info').then(r=>r.json()).then(d=>{
@@ -78,6 +90,8 @@ fetch('/api/info').then(r=>r.json()).then(d=>{
 // Warn about credential problems before an image path is handed out, so a
 // stale image is not shipped to a fresh VM unnoticed.
 fetch('/api/creds').then(r=>r.json()).then(d=>{
+  if(d.authed){pkShowAuthed();$('#pkbox').classList.remove('hide')}
+  else if(d.passkeys>0&&pkSupported()){$('#pkbox').classList.remove('hide')}
   const w=d.warnings||[]; if(!w.length)return;
   const c=d.counts||{}, severe=(c.missing||0)+(c.expired||0)+(c.unknown||0);
   $('#banners').innerHTML=`<div class="banner ${severe?'b-bad':'b-warn'}">
@@ -106,6 +120,25 @@ async function grant(){
 }
 $('#go').onclick=grant;
 $('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')grant()});
+
+// ---- passkey ----
+// A passkey session authorises /api/grant on its own, so once authenticated the
+// password field is no longer needed and is hidden to make that obvious.
+let pkAuthed=false;
+function pkShowAuthed(){
+  pkAuthed=true;
+  $('#pkok').classList.remove('hide');
+  $('#pklogin').classList.add('hide');
+  $('#pwbox').classList.add('hide');
+  $('#pkbox').querySelector('.sepwrap').classList.add('hide');
+}
+async function pkDoLogin(){
+  const b=$('#pklogin'); b.disabled=true; $('#err').classList.add('hide');
+  try{ await pkLoginCeremony(); pkShowAuthed() }
+  catch(e){ $('#err').textContent=pkError(e); $('#err').classList.remove('hide') }
+  finally{ b.disabled=false }
+}
+$('#pklogin').onclick=pkDoLogin;
 document.addEventListener('click',e=>{
   const t=e.target.closest('.cp');if(!t)return;
   navigator.clipboard.writeText($('#'+t.dataset.c).textContent).then(()=>{

@@ -44,11 +44,13 @@ tr.clk:hover td{background:#1c2128}
 #termbox{background:#000;border:1px solid var(--line);border-radius:10px;padding:8px;height:460px}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;max-height:240px;margin:12px 0 0}
-.hide{display:none}
+.hide{display:none !important}
 code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-size:12.5px}
 .err{color:var(--bad);font-size:13px;margin-top:10px}
 .sepwrap{display:flex;align-items:center;gap:10px;margin:14px 0;color:var(--mut);font-size:12px}
 .sepwrap::before,.sepwrap::after{content:"";flex:1;height:1px;background:var(--line)}
+.vgrid{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;align-items:baseline}
+.vk{color:var(--mut)}
 .del{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
 .del:hover{color:var(--bad);border-color:var(--bad)}
 </style>
@@ -118,6 +120,13 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
   </div>
 
   <div class="card">
+    <h2>도구 버전</h2>
+    <p class="note" style="margin:-4px 0 10px">이미지에 설치된 버전입니다. VM 안에서는 <code>ai-cli-update.timer</code> 가
+      부팅 3분 후 + 매일 자동 업데이트하고, 이 서버는 매주 일요일 <code>hunyimg refresh</code> 로 이미지를 다시 굽습니다.</p>
+    <div id="vers" class="note">-</div>
+  </div>
+
+  <div class="card">
     <h2>패스키 (WebAuthn)</h2>
     <p class="note" style="margin:-4px 0 12px">패스키는 등록한 도메인에만 유효합니다. 지금 접속한 도메인:
       <code id="rpid">-</code>. 다른 도메인(예: <code>images.huny.dev</code>)에서도 쓰려면 그 도메인으로 접속해
@@ -146,6 +155,7 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
 </div>
 </div>
 
+<script src="/passkey.js"></script>
 <script type="module">
 import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
 import { FitAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
@@ -172,6 +182,12 @@ async function refresh(){
   $('#gate').classList.add('hide');$('#app').classList.remove('hide');
   $('#bakedat').textContent=d.baked?new Date(d.baked).toLocaleString():'없음';
   pkList().catch(()=>{});
+  const v=d.versions;
+  $('#vers').innerHTML = v
+    ? `<div class="vgrid">`+Object.entries(v).filter(([k])=>k!=='updated')
+        .map(([k,val])=>`<span class="vk">${k}</span><span class="mono">${val||'-'}</span>`).join('')
+      +`</div>`+(v.updated?`<div style="margin-top:8px">마지막 갱신: ${new Date(v.updated).toLocaleString()}</div>`:'')
+    : '이미지에서 버전 정보를 읽지 못했습니다 (아직 build 하지 않았을 수 있습니다)';
 
   const bad=d.creds.filter(c=>c.state==='missing'||c.state==='expired'||c.state==='unknown');
   $('#banners').innerHTML = bad.length
@@ -265,74 +281,27 @@ function maybeOpenRelay(creds){
 
 
 // ---- passkeys (WebAuthn) ----
-// The browser API speaks ArrayBuffers while JSON speaks base64url, so every
-// value crossing that boundary has to be converted explicitly.
-const b64uToBuf=v=>{const b=v.replace(/-/g,'+').replace(/_/g,'/');
-  const pad=b+'='.repeat((4-b.length%4)%4);
-  return Uint8Array.from(atob(pad),c=>c.charCodeAt(0)).buffer};
-const bufToB64u=b=>btoa(String.fromCharCode(...new Uint8Array(b)))
-  .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-
-function pkSupported(){
-  return !!(window.PublicKeyCredential && navigator.credentials);
-}
+// Ceremony helpers live in /passkey.js, shared with the vending page.
 
 async function pkRegister(){
   const st=$('#pkstat'), b=$('#pkadd');
-  if(!pkSupported()){st.textContent='이 브라우저는 WebAuthn 을 지원하지 않습니다';st.style.color='var(--bad)';return}
+  if(!pkSupported()){st.textContent='이 브라우저/컨텍스트에서는 패스키를 쓸 수 없습니다';st.style.color='var(--bad)';return}
   const label=$('#pklabel').value.trim()||'passkey';
   b.disabled=true; st.style.color=''; st.textContent='인증기를 기다리는 중...';
   try{
-    const opts=await api('/admin/api/passkey/register/begin',{method:'POST'});
-    const pk=opts.publicKey;
-    pk.challenge=b64uToBuf(pk.challenge);
-    pk.user.id=b64uToBuf(pk.user.id);
-    (pk.excludeCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));
-    const cred=await navigator.credentials.create({publicKey:pk});
-    const body={
-      id:cred.id, rawId:bufToB64u(cred.rawId), type:cred.type,
-      clientExtensionResults:cred.getClientExtensionResults(),
-      response:{
-        clientDataJSON:bufToB64u(cred.response.clientDataJSON),
-        attestationObject:bufToB64u(cred.response.attestationObject),
-        transports:cred.response.getTransports?cred.response.getTransports():[],
-      },
-    };
-    await api('/admin/api/passkey/register/finish?label='+encodeURIComponent(label),
-      {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    await pkRegisterCeremony(label);
     st.textContent=`"${label}" 등록 완료`; st.style.color='var(--ok)';
     $('#pklabel').value=''; pkList();
-  }catch(e){
-    st.textContent=(e.name==='NotAllowedError')?'취소되었거나 시간이 초과되었습니다':String(e.message||e);
-    st.style.color='var(--bad)';
-  }finally{b.disabled=false}
+  }catch(e){ st.textContent=pkError(e); st.style.color='var(--bad)' }
+  finally{ b.disabled=false }
 }
 
 async function pkLogin(){
-  const el=$('#lerr'); el.classList.add('hide');
-  try{
-    const opts=await api('/admin/api/passkey/login/begin',{method:'POST'});
-    const pk=opts.publicKey;
-    pk.challenge=b64uToBuf(pk.challenge);
-    (pk.allowCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));
-    const cred=await navigator.credentials.get({publicKey:pk});
-    const body={
-      id:cred.id, rawId:bufToB64u(cred.rawId), type:cred.type,
-      clientExtensionResults:cred.getClientExtensionResults(),
-      response:{
-        clientDataJSON:bufToB64u(cred.response.clientDataJSON),
-        authenticatorData:bufToB64u(cred.response.authenticatorData),
-        signature:bufToB64u(cred.response.signature),
-        userHandle:cred.response.userHandle?bufToB64u(cred.response.userHandle):null,
-      },
-    };
-    await api('/admin/api/passkey/login/finish',
-      {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
-    await refresh();
-  }catch(e){
-    el.textContent=(e.name==='NotAllowedError')?'취소되었거나 시간이 초과되었습니다':String(e.message||e);
-    el.classList.remove('hide');
-  }
+  const el=$('#lerr'), b=$('#pklogin');
+  el.classList.add('hide'); b.disabled=true;
+  try{ await pkLoginCeremony(); await refresh() }
+  catch(e){ el.textContent=pkError(e); el.classList.remove('hide') }
+  finally{ b.disabled=false }
 }
 
 async function pkList(){

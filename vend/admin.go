@@ -149,6 +149,7 @@ func (a *admin) handleCreds(w http.ResponseWriter, r *http.Request) {
 			"creds": creds, "warnings": summarize(creds), "authed": true,
 			"baked": a.srv.bakedAt(), "authed_home": a.srv.cfg.AuthHome,
 			"passkeys": a.passkeyCountFor(r), "passkeys_total": a.pk.count(),
+			"versions": a.srv.toolVersions(),
 		})
 		return
 	}

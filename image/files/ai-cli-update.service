@@ -1,0 +1,12 @@
+[Unit]
+Description=Update AI agent CLIs
+Documentation=https://github.com/hunydev
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/update-ai-clis --quiet
+# Updates are a convenience, never a reason to fail a boot.
+SuccessExitStatus=0 1
+TimeoutStartSec=15min

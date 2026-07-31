@@ -22,9 +22,21 @@ ensure_authhome(){
 }
 
 cmd_build(){
+  local args=(--pull)
+  # Optional components, e.g. `WITH_GO=0 hunyimg build` to drop the Go toolchain.
+  for v in WITH_GO; do
+    if [ -n "${!v:-}" ]; then args+=(--build-arg "$v=${!v}"); log "$v=${!v}"; fi
+  done
+  # `hunyimg build --fresh` forces the AI CLI layer to rebuild so it picks up
+  # new releases; without it Docker would happily reuse a months-old layer.
+  if [ "${1:-}" = "--fresh" ]; then
+    args+=(--build-arg "CLI_REFRESH=$(date +%s)")
+    log "forcing fresh AI CLI versions"
+  fi
   log "building $BASE"
-  docker build --pull -t "$BASE" -f "$ROOT/image/Dockerfile" "$ROOT/image"
-  docker run --rm "$BASE" bash -lc 'node -v; npm -v; python3 -V; go version; uv --version; gh --version|head -1; codex --version; claude --version; gemini --version'
+  docker build "${args[@]}" -t "$BASE" -f "$ROOT/image/Dockerfile" "$ROOT/image"
+  docker run --rm "$BASE" bash -lc 'node -v; npm -v; python3 -V; uv --version; gh --version|head -1; codex --version; claude --version; gemini --version; command -v go >/dev/null && go version || echo "go: not installed"'
+  log "size: $(docker image inspect "$BASE" --format "{{.Size}}" | numfmt --to=iec)"
   log "done. next: hunyimg auth <tool>, then hunyimg bake"
 }
 
@@ -202,6 +214,40 @@ cmd_vend_build(){
 
 cmd_grants(){ curl -s localhost:8000/api/info | jq .; }
 
+# cmd_refresh rebuilds the base image with current AI CLI releases and re-bakes
+# the credentialed image on top, so freshly vended images are never stale.
+# Credentials live outside the image (in $AUTHHOME) which is what makes this
+# safe to run unattended.
+cmd_refresh(){
+  local before after
+  before=$(docker run --rm "$BASE" cat /etc/ai-cli-versions.json 2>/dev/null || echo '{}')
+  cmd_build --fresh
+  after=$(docker run --rm "$BASE" cat /etc/ai-cli-versions.json 2>/dev/null || echo '{}')
+  if [ "$before" = "$after" ]; then
+    log "no CLI version changes"
+  else
+    log "versions changed:"
+    diff <(echo "$before") <(echo "$after") | grep -E '^[<>]' || true
+  fi
+  # Only re-bake if credentials exist; otherwise we would publish an image
+  # that silently lost its logins.
+  if [ -f "$AUTHHOME/.codex/auth.json" ] || [ -f "$AUTHHOME/.claude/.credentials.json" ] \
+     || [ -f "$AUTHHOME/.gemini/oauth_creds.json" ] || [ -f "$AUTHHOME/.config/gh/hosts.yml" ]; then
+    cmd_bake
+  else
+    log "no credentials in $AUTHHOME; skipping bake"
+  fi
+  docker image prune -f >/dev/null 2>&1 || true
+}
+
+cmd_versions(){
+  local img="${1:-$DEV}"
+  docker image inspect "$img" >/dev/null 2>&1 || img=$BASE
+  log "tool versions in $img"
+  docker run --rm "$img" cat /etc/ai-cli-versions.json 2>/dev/null | jq . \
+    || docker run --rm "$img" bash -lc 'codex --version; claude --version; gemini --version; gh --version|head -1'
+}
+
 cmd_gc(){
   log "pruning dangling images and registry garbage"
   docker image prune -f
@@ -214,6 +260,8 @@ cmd_gc(){
 
 case "${1:-help}" in
   build) shift; cmd_build "$@" ;;
+  refresh) shift; cmd_refresh "$@" ;;
+  versions) shift; cmd_versions "$@" ;;
   shell) shift; cmd_shell "$@" ;;
   auth) shift; cmd_auth "$@" ;;
   status) shift; cmd_status "$@" ;;
@@ -230,7 +278,9 @@ case "${1:-help}" in
   *) cat <<'EOF'
 hunyimg - custom exe.dev image builder + time-limited image vending
 
-  hunyimg build          rebuild the base image (hunydev/base:latest)
+  hunyimg build [--fresh] rebuild the base image (--fresh = newest AI CLI releases)
+  hunyimg refresh        update AI CLIs, rebuild base, re-bake dev (run by timer)
+  hunyimg versions [img] show the tool versions baked into an image
   hunyimg auth <tool>    log in inside the image: gh | codex | claude | gemini | all
   hunyimg relay <url>    replay a gemini localhost OAuth callback from the VM
   hunyimg import [file]  import credentials from a tar (stdin by default)

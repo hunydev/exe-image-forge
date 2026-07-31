@@ -478,3 +478,30 @@ func TestPasskeyEndpointsNeedSession(t *testing.T) {
 
 // asn1Marshal is split out so the ECDSA signature encoding is obvious.
 func asn1Marshal(v any) ([]byte, error) { return asn1.Marshal(v) }
+
+// A passkey session must authorise image vending without the password, since
+// that is the whole point of offering passkeys on the main page.
+func TestGrantAcceptsSessionInsteadOfPassword(t *testing.T) {
+	a := newTestAdmin(t)
+	s := a.srv
+	s.sessionAuthed = a.authed
+	tok := a.newSession()
+
+	authed := func(r *http.Request) bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.sessionAuthed != nil && s.sessionAuthed(r) {
+			return true
+		}
+		return false
+	}
+	if !authed(req("POST", "/api/grant", nil, "images.huny.dev", tok)) {
+		t.Error("valid session not recognised by the grant path")
+	}
+	if authed(req("POST", "/api/grant", nil, "images.huny.dev", "")) {
+		t.Error("missing cookie accepted")
+	}
+	if authed(req("POST", "/api/grant", nil, "images.huny.dev", "bogus-token")) {
+		t.Error("forged session token accepted")
+	}
+}

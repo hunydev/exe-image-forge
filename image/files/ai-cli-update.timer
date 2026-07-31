@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily AI agent CLI update
+
+[Timer]
+# Run shortly after boot so a VM created from an old image catches up quickly,
+# then daily. Randomised so many VMs do not stampede the release servers.
+OnBootSec=3min
+OnUnitActiveSec=24h
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

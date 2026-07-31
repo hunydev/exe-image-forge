@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -269,5 +270,67 @@ func TestLoginCommandsAreHeadless(t *testing.T) {
 		if (c.Tool == "gemini") != c.NeedsRelay {
 			t.Errorf("%s: needs_relay = %v", c.Tool, c.NeedsRelay)
 		}
+	}
+}
+
+// The updater and the image must not drift apart: if a CLI is installed but
+// the updater does not know how to update it, it silently rots forever. This
+// checks the two halves stay in sync.
+func TestUpdaterCoversEveryTrackedCLI(t *testing.T) {
+	script, err := os.ReadFile("../image/files/update-ai-clis")
+	if err != nil {
+		t.Skipf("update script not available: %v", err)
+	}
+	src := string(script)
+	for _, tool := range []string{"codex", "claude", "gemini", "gh"} {
+		if !strings.Contains(src, "update_"+tool+"()") {
+			t.Errorf("update-ai-clis has no update_%s(); %s would never be updated", tool, tool)
+		}
+	}
+	// The default tool list must actually run them.
+	if !strings.Contains(src, `TOOLS:-codex claude gemini gh`) {
+		t.Error("default TOOLS list does not cover all four CLIs")
+	}
+	// Every tool the credential inspector reports on should be updatable.
+	for _, c := range inspectCreds(t.TempDir()) {
+		if !strings.Contains(src, "update_"+c.Tool+"()") {
+			t.Errorf("credential tool %q has no updater", c.Tool)
+		}
+	}
+}
+
+// A failure updating one CLI must not abort the others, and must not leave the
+// script exiting non-zero silently in the middle.
+func TestUpdaterIsFaultTolerant(t *testing.T) {
+	script, err := os.ReadFile("../image/files/update-ai-clis")
+	if err != nil {
+		t.Skipf("update script not available: %v", err)
+	}
+	src := string(script)
+	if strings.Contains(src, "set -euo pipefail") {
+		t.Error("script uses `set -e`: one failing CLI would abort the rest")
+	}
+	if !strings.Contains(src, "|| rc=1") {
+		t.Error("per-tool failures are not collected into the exit status")
+	}
+	// systemd must not treat a partial update as a boot failure.
+	unit, err := os.ReadFile("../image/files/ai-cli-update.service")
+	if err != nil {
+		t.Skipf("unit not available: %v", err)
+	}
+	if !strings.Contains(string(unit), "SuccessExitStatus=0 1") {
+		t.Error("ai-cli-update.service will report failure when a single CLI update fails")
+	}
+	timer, err := os.ReadFile("../image/files/ai-cli-update.timer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Without a boot trigger, a VM from an old image stays stale until the
+	// next daily tick, which may never come for short-lived VMs.
+	if !strings.Contains(string(timer), "OnBootSec=") {
+		t.Error("timer has no OnBootSec; freshly created VMs would not catch up")
+	}
+	if !strings.Contains(string(timer), "RandomizedDelaySec=") {
+		t.Error("timer has no jitter; many VMs would stampede the release servers")
 	}
 }

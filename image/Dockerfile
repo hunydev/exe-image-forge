@@ -46,11 +46,18 @@ RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg -
     node --version && npm --version && npx --version
 
 # --- go ------------------------------------------------------------------
-RUN ARCH=$(dpkg --print-architecture) && \
-    GO_VERSION=$(curl -fsSL 'https://go.dev/dl/?mode=json' | jq -r '.[0].version') && \
-    curl -fsSL "https://go.dev/dl/${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -xzC /usr/local && \
-    ln -s /usr/local/go/bin/go /usr/local/bin/go && \
-    ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && go version
+# WITH_GO=0 drops the Go toolchain (~240MB after slimming). Everything else in
+# the image works without it; only `go`/`gofmt` disappear.
+ARG WITH_GO=1
+RUN if [ "$WITH_GO" = "1" ]; then \
+      ARCH=$(dpkg --print-architecture) && \
+      GO_VERSION=$(curl -fsSL 'https://go.dev/dl/?mode=json' | jq -r '.[0].version') && \
+      curl -fsSL "https://go.dev/dl/${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -xzC /usr/local && \
+      ln -s /usr/local/go/bin/go /usr/local/bin/go && \
+      ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
+      rm -rf /usr/local/go/test /usr/local/go/api /usr/local/go/doc && \
+      go version ; \
+    else echo "skipping go toolchain" ; fi
 
 # --- uv / uvx ------------------------------------------------------------
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh && \
@@ -105,26 +112,32 @@ RUN chmod 644 /etc/systemd/system/shelley.socket /etc/systemd/system/shelley.ser
     systemctl enable shelley.socket exe-setup.service
 
 # --- ai agent clis -------------------------------------------------------
-# codex (native binary)
-RUN case "$(uname -m)" in \
-      x86_64) A=x86_64-unknown-linux-musl ;; \
-      aarch64|arm64) A=aarch64-unknown-linux-musl ;; \
-      *) echo unsupported; exit 1 ;; \
-    esac && \
-    V=$(curl -fsSL https://api.github.com/repos/openai/codex/releases/latest | jq -r .tag_name) && \
-    curl -fsSL "https://github.com/openai/codex/releases/download/${V}/codex-${A}.tar.gz" | tar -xzC /usr/local/bin && \
-    mv "/usr/local/bin/codex-${A}" /usr/local/bin/codex && chmod +x /usr/local/bin/codex && \
-    codex --version
+# The CLIs are installed by the same script that later updates them in place,
+# so there is exactly one definition of "how do I get the current version" and
+# the update path is exercised on every build.
+COPY files/update-ai-clis /usr/local/bin/update-ai-clis
+COPY files/ai-cli-update.service /etc/systemd/system/ai-cli-update.service
+COPY files/ai-cli-update.timer /etc/systemd/system/ai-cli-update.timer
+# CLI_REFRESH busts the layer cache when we want fresh CLI versions without
+# rebuilding the (slow, stable) layers underneath.
+ARG CLI_REFRESH=0
+RUN chmod 755 /usr/local/bin/update-ai-clis && \
+    chmod 644 /etc/systemd/system/ai-cli-update.service /etc/systemd/system/ai-cli-update.timer && \
+    systemctl enable ai-cli-update.timer && \
+    echo "refresh=${CLI_REFRESH}" && \
+    /usr/local/bin/update-ai-clis && \
+    codex --version && claude --version && gemini --version && \
+    cat /etc/ai-cli-versions.json
 
-# gemini cli (npm, global)
-RUN npm install -g @google/gemini-cli && npm cache clean --force && gemini --version
-
-# claude code (official installer, into /usr/local)
-RUN curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh && \
-    bash /tmp/claude-install.sh latest && rm -f /tmp/claude-install.sh && \
-    ( test -x /root/.local/bin/claude && install -m0755 /root/.local/bin/claude /usr/local/bin/claude || true ) && \
-    rm -rf /root/.local/share/claude /root/.local/bin/claude && \
-    claude --version
+# --- slimming ------------------------------------------------------------
+# Documentation, changelogs and vim's runtime are dead weight in an image whose
+# whole purpose is to be pulled repeatedly over the network. Removed last so it
+# also catches anything the CLI installs dropped.
+RUN rm -rf /usr/share/doc/* /usr/share/doc-base /usr/share/info \
+           /usr/share/lintian /usr/share/linda /usr/share/man/?? /usr/share/man/??_* \
+           /var/cache/debconf/*-old /var/lib/apt/lists/* /var/log/* /tmp/* && \
+    find /usr/share/locale -maxdepth 1 -mindepth 1 -type d \
+         ! -name 'en*' ! -name 'ko*' ! -name 'C*' -exec rm -rf {} + 2>/dev/null || true
 
 # --- user config ---------------------------------------------------------
 USER exedev

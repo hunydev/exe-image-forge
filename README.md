@@ -134,3 +134,39 @@ exe.dev 프록시는 HTTPS 만 노출하며 기본이 **인증 게이트(private
 - 설정: `/etc/hunyimg/config.json`
 - 상태: `/var/lib/hunyimg/{grants.json,authhome,registry}`
 - 서비스: `hunyimg-vend.service`, `hunyimg-gc.timer`, `registry` (docker)
+
+
+## 자동 업데이트
+
+AI agent CLI 는 두 군데서 자동으로 갱신됩니다.
+
+**VM 안에서** — `ai-cli-update.timer` 가 부팅 3분 후 한 번, 이후 매일 `update-ai-clis` 를 실행합니다.
+부팅 트리거가 있어야 오래된 이미지로 만든 VM 도 바로 최신이 됩니다. 릴리스 서버에 몰리지 않도록
+30분 지터를 넣었습니다.
+
+**이미지 자체** — 이 VM 의 `hunyimg-refresh.timer` 가 매주 일요일 `hunyimg refresh` 를 돌려
+base 를 다시 빌드하고 (자격증명이 있으면) dev 를 다시 굽습니다. 자격증명은 이미지 밖
+(`/var/lib/hunyimg/authhome`)에 있으므로 무인 실행이 안전합니다.
+
+`update-ai-clis` 설계:
+
+- 도구별로 독립 실행 — 한 곳의 네트워크 오류가 나머지를 막지 않습니다 (`set -e` 를 쓰지 않음)
+- 새 바이너리를 임시 위치에 받아 `--version` 이 도는지 확인한 뒤에야 교체 (중단되어도 실행 불가 상태가 되지 않음)
+- 결과를 `/etc/ai-cli-versions.json` 에 기록 → 관리 페이지 "도구 버전" 카드와 `hunyimg versions` 가 이걸 읽습니다
+- Dockerfile 도 같은 스크립트로 설치하므로 "최신 버전 구하는 법" 정의가 한 곳뿐이고, 업데이트 경로가 매 빌드마다 검증됩니다
+
+## 이미지 크기
+
+`ubuntu:24.04` 기준 581MB (압축 전). 큰 항목:
+
+| 항목 | 크기 |
+|---|---|
+| claude + codex (네이티브 바이너리) | ~586MB 원본, 레이어 공유 |
+| nodejs + npm 글로벌 (gemini-cli 100MB) | ~230MB |
+| go 툴체인 (test/api/doc 제거 후) | 240MB |
+| uv | 55MB |
+| build-essential (gcc/g++/binutils) | ~150MB |
+
+`WITH_GO=0 hunyimg build` 로 Go 툴체인을 뺄 수 있습니다 (240MB 절약). 나머지는 모두
+요청하신 요구사항(node/npm/npx, python, uv/uvx, go, gh, codex, claude, gemini)에 직접 대응하므로
+빼면 기능이 사라집니다.

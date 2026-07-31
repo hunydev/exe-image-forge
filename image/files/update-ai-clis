@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# Update the AI agent CLIs in place. Runs as root, both from the daily timer
+# inside a spawned VM and from the image build.
+#
+# Each tool is updated independently and a failure in one must not stop the
+# others: a transient network error on one vendor should not leave the whole
+# toolchain stale. Updates are also written atomically where possible, so an
+# interrupted run cannot leave a half-written binary that no longer executes.
+set -uo pipefail
+
+QUIET=0
+[ "${1:-}" = "--quiet" ] && QUIET=1
+say(){ [ "$QUIET" = 1 ] || printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+warn(){ printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
+
+rc=0
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+# --- codex: native binary from GitHub releases ---------------------------
+update_codex(){
+  local cur tag want arch
+  cur=$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+  # The release tag is not simply "v<version>" (it is currently "rust-v<version>"),
+  # so use the tag verbatim in the URL and only parse out the number for the
+  # up-to-date comparison.
+  tag=$(curl -fsSL --max-time 30 https://api.github.com/repos/openai/codex/releases/latest \
+        | jq -r '.tag_name // empty')
+  [ -n "$tag" ] || { warn "codex: could not determine latest release"; return 1; }
+  want=$(printf '%s' "$tag" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  [ -n "$want" ] || { warn "codex: unrecognised tag $tag"; return 1; }
+  if [ "$cur" = "$want" ]; then say "codex $cur (latest)"; return 0; fi
+  case "$(uname -m)" in
+    x86_64) arch=x86_64-unknown-linux-musl ;;
+    aarch64|arm64) arch=aarch64-unknown-linux-musl ;;
+    *) warn "codex: unsupported arch $(uname -m)"; return 1 ;;
+  esac
+  say "codex ${cur:-none} -> $want"
+  curl -fsSL --max-time 300 \
+    "https://github.com/openai/codex/releases/download/${tag}/codex-${arch}.tar.gz" \
+    | tar -xzC "$tmp" || { warn "codex: download failed"; return 1; }
+  [ -f "$tmp/codex-${arch}" ] || { warn "codex: archive layout changed"; return 1; }
+  chmod +x "$tmp/codex-${arch}"
+  # Verify the new binary runs before it replaces the working one.
+  "$tmp/codex-${arch}" --version >/dev/null 2>&1 || { warn "codex: new binary does not run"; return 1; }
+  install -m0755 "$tmp/codex-${arch}" /usr/local/bin/.codex.new && mv -f /usr/local/bin/.codex.new /usr/local/bin/codex
+}
+
+# --- claude: official installer ------------------------------------------
+update_claude(){
+  local cur new
+  cur=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+  say "claude ${cur:-none} -> checking"
+  curl -fsSL --max-time 60 https://claude.ai/install.sh -o "$tmp/claude-install.sh" \
+    || { warn "claude: installer download failed"; return 1; }
+  # The installer drops into $HOME/.local/bin; run it in a scratch HOME so it
+  # cannot disturb the real one, then promote the result.
+  HOME="$tmp/home" bash "$tmp/claude-install.sh" latest >/dev/null 2>&1 || true
+  new=$(ls "$tmp/home/.local/bin/claude" 2>/dev/null || true)
+  [ -n "$new" ] || { warn "claude: installer produced no binary"; return 1; }
+  "$new" --version >/dev/null 2>&1 || { warn "claude: new binary does not run"; return 1; }
+  install -m0755 "$new" /usr/local/bin/.claude.new && mv -f /usr/local/bin/.claude.new /usr/local/bin/claude
+  say "claude now $(claude --version 2>/dev/null | head -1)"
+}
+
+# --- gemini: npm global ---------------------------------------------------
+update_gemini(){
+  local cur
+  cur=$(gemini --version 2>/dev/null | head -1 || true)
+  say "gemini ${cur:-none} -> checking"
+  npm install -g @google/gemini-cli@latest >/dev/null 2>&1 \
+    || { warn "gemini: npm install failed"; return 1; }
+  npm cache clean --force >/dev/null 2>&1 || true
+  say "gemini now $(gemini --version 2>/dev/null | head -1)"
+}
+
+# --- gh: apt --------------------------------------------------------------
+update_gh(){
+  say "gh $(gh --version 2>/dev/null | head -1 | grep -oE '[0-9.]+' | head -1) -> checking"
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 \
+    || { warn "gh: apt-get update failed"; return 1; }
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade -qq gh >/dev/null 2>&1 \
+    || { warn "gh: apt upgrade failed"; return 1; }
+  rm -rf /var/lib/apt/lists/*
+}
+
+only="${TOOLS:-codex claude gemini gh}"
+for t in $only; do
+  case "$t" in
+    codex)  update_codex  || rc=1 ;;
+    claude) update_claude || rc=1 ;;
+    gemini) update_gemini || rc=1 ;;
+    gh)     update_gh     || rc=1 ;;
+    *) warn "unknown tool: $t"; rc=1 ;;
+  esac
+done
+
+# Record what we ended up with so the admin page and `verify` can report it
+# without having to run four slow CLIs.
+{
+  echo "{"
+  printf '  "updated": "%s",\n' "$(date -Is)"
+  printf '  "codex": "%s",\n'  "$(codex --version 2>/dev/null | head -1 | tr -d '"')"
+  printf '  "claude": "%s",\n' "$(claude --version 2>/dev/null | head -1 | tr -d '"')"
+  printf '  "gemini": "%s",\n' "$(gemini --version 2>/dev/null | head -1 | tr -d '"')"
+  printf '  "gh": "%s",\n'     "$(gh --version 2>/dev/null | head -1 | tr -d '"')"
+  printf '  "node": "%s",\n'   "$(node --version 2>/dev/null)"
+  printf '  "go": "%s"\n'      "$(go version 2>/dev/null | awk '{print $3}')"
+  echo "}"
+} > /etc/ai-cli-versions.json 2>/dev/null || true
+
+exit $rc
