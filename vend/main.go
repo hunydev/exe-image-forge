@@ -588,6 +588,13 @@ func (s *server) reconcileOrphans(ctx context.Context, dryRun bool) (int, error)
 			}
 			created, label, err := s.grantTagMetadata(ctx, repo, tag)
 			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					// A previous interrupted cleanup may leave a tag index
+					// entry whose manifest is already gone. There is no
+					// reachable image or digest left for the API to delete.
+					log.Printf("orphan reconciliation: stale tag index %s:%s has no manifest", repo, tag)
+					continue
+				}
 				errs = append(errs, fmt.Errorf("inspect %s:%s: %w", repo, tag, err))
 				continue
 			}

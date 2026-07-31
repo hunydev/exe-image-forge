@@ -138,3 +138,30 @@ func TestGrantTagRecognizerIsNarrow(t *testing.T) {
 		}
 	}
 }
+
+func TestReconcileOrphansIgnoresStaleTagIndex(t *testing.T) {
+	const repo = "forge/dev"
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/"+repo+"/tags/list" {
+			json.NewEncoder(w).Encode(map[string]any{
+				"name": repo, "tags": []string{"aaaaaaaaaaaaaaaa"},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer registry.Close()
+	u, err := url.Parse(registry.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &server{
+		cfg:         Config{Repos: []string{repo}},
+		registryURL: u,
+		statePath:   filepath.Join(t.TempDir(), "grants.json"),
+		byToken:     map[string]*Grant{},
+	}
+	if count, err := s.reconcileOrphans(context.Background(), false); err != nil || count != 0 {
+		t.Fatalf("stale index count=%d err=%v, want a safe no-op", count, err)
+	}
+}
