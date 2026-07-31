@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>Exe Image Forge · Admin</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+<link rel="stylesheet" href="/assets/xterm.css">
 <style>
 :root{color-scheme:dark;--bg:#0d1117;--fg:#e6edf3;--mut:#8b949e;--card:#161b22;--line:#30363d;--acc:#2f81f7;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
 *{box-sizing:border-box}
@@ -215,9 +215,11 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
 </div>
 
 <script src="/passkey.js"></script>
+<script src="/assets/xterm.js"></script>
+<script src="/assets/addon-fit.js"></script>
 <script type="module">
-import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
-import { FitAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
+const {Terminal}=window;
+const {FitAddon}=window.FitAddon;
 
 const $=s=>document.querySelector(s);
 const STATE={ok:'Signed in',stale:'Refresh pending',expired:'Expired',missing:'Not signed in',unknown:'Unknown'};

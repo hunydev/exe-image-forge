@@ -20,8 +20,9 @@ browser ──HTTPS──> exe.dev proxy ──> :8000 vending service
 - `exe-image-forge/base` contains tools without credentials.
 - `exe-image-forge/dev` adds allowlisted, pre-authenticated credentials.
 - Each grant creates a metadata-only image layer and a unique tag.
-- Expiry removes the tag and token route. The daily garbage-collection timer
-  later reclaims unreferenced registry blobs.
+- Expiry removes the tag and token route. A six-hour reconciliation pass also
+  removes old, Forge-labeled tags that are not present in grant state. The
+  daily garbage-collection timer later reclaims unreferenced registry blobs.
 
 ## Browser workflow
 
@@ -107,7 +108,7 @@ The command prints an allowlisted tar workflow for importing them.
 | `exe-image-forge token [token]` | Store the exe.dev VM token used by Docker |
 | `exe-image-forge vend-build` | Rebuild and restart the vending service |
 | `exe-image-forge grants` | List active grants |
-| `exe-image-forge gc` | Prune Docker and registry garbage |
+| `exe-image-forge gc [--dry-run]` | Safely prune local, build-cache, and registry garbage |
 
 ## Image variants
 
@@ -222,8 +223,9 @@ GET/HEAD methods.
 
 - The web password is stored as PBKDF2-HMAC-SHA256 with a random salt and
   210,000 iterations.
-- Five failed attempts start an increasing lockout shared by password and
-  passkey login.
+- Five failed attempts start an increasing per-client lockout shared by
+  password and passkey login. Password hashing is globally concurrency-bounded
+  and does not hold the grant/pull lock.
 - Browser sessions use HttpOnly, Secure, SameSite=Lax cookies and expire after
   eight hours.
 - WebAuthn derives and validates the relying-party ID from the request host.
@@ -232,6 +234,27 @@ GET/HEAD methods.
   require an active session.
 - Grant tokens are 128-bit random values, read-only, scoped to one repository,
   and limited to a maximum 24-hour TTL.
+- The authenticated terminal loads its pinned xterm distributions locally.
+  CSP hashes allow only the repository's inline application code, while common
+  security headers block framing, MIME sniffing, and unnecessary browser APIs.
+
+## Registry maintenance and disk guard
+
+Registry garbage collection is stop-the-world. The command takes the same file
+lock used by grant publication, stops the registry, runs a one-shot collector
+against its volumes, and restarts the registry even when collection fails or
+the process receives a termination signal. `--dry-run` does not prune local
+images or build cache and does not delete registry data.
+
+Grant publication, base builds, and credential bakes refuse to start when disk
+usage reaches `FORGE_MAX_DISK_PERCENT` or free space falls below
+`FORGE_MIN_FREE_BYTES`. GC removes dangling images and Forge-labeled local
+grant copies, then bounds Buildx cache with `FORGE_BUILD_CACHE_MIN_FREE` and
+`FORGE_BUILD_CACHE_RESERVED`.
+
+Orphan reconciliation only considers configured repositories and 16-character
+grant tags. A tag must carry a matching Forge grant label, be absent from active
+state, and be older than `FORGE_ORPHAN_GRACE` before it can be removed.
 
 ## Host paths
 

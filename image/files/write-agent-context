@@ -96,7 +96,8 @@ plain HTTP and no arbitrary TCP.
 
 Because of that, **OAuth flows that redirect to \`http://localhost:<port>\` do not
 work from a browser on another machine.** Prefer the headless variants:
-\`codex login --device-auth\`, \`claude setup-token\`, \`gh auth login\` (device code).
+\`codex login --device-auth\`, \`claude auth login\`, and \`gh auth login\`
+(device-code or pasted-code flows).
 
 ### Conventions
 MD

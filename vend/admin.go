@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"log"
@@ -126,27 +125,20 @@ func (a *admin) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := a.srv
-	s.mu.Lock()
-	if time.Now().Before(s.lockout) {
-		wait := int(time.Until(s.lockout).Seconds()) + 1
-		s.mu.Unlock()
+	ok, retry := s.checkPassword(r, req.Password)
+	if retry > 0 {
+		wait := int(retry.Round(time.Second).Seconds())
+		if wait < 1 {
+			wait = 1
+		}
 		w.Header().Set("Retry-After", strconv.Itoa(wait))
 		http.Error(w, "too many attempts, retry in "+strconv.Itoa(wait)+"s", 429)
 		return
 	}
-	ok := subtle.ConstantTimeCompare([]byte(hashPassword(req.Password, s.cfg.Salt)), []byte(s.cfg.Hash)) == 1
 	if !ok {
-		s.fails++
-		if s.fails >= 5 {
-			s.lockout = time.Now().Add(time.Duration(s.fails-4) * time.Minute)
-		}
-		s.mu.Unlock()
-		time.Sleep(500 * time.Millisecond)
 		http.Error(w, "wrong password", 403)
 		return
 	}
-	s.fails = 0
-	s.mu.Unlock()
 
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: a.newSession(), Path: "/",
@@ -167,7 +159,10 @@ func (a *admin) handleLogout(w http.ResponseWriter, r *http.Request) {
 		delete(a.sessions, c.Value)
 		a.mu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+	})
 	w.Write([]byte(`{"ok":true}`))
 }
 
@@ -373,7 +368,7 @@ func (a *admin) handleTerm(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRelay replays an OAuth callback URL that the user's browser could not
-// reach. Gemini CLI (unlike codex --device-auth and claude setup-token) has no
+// reach. Gemini CLI (unlike codex --device-auth and claude auth login) may have no
 // device flow: it spawns a throwaway HTTP listener on a random localhost port
 // and waits for Google to redirect there. That redirect lands on the user's
 // laptop, not this VM, so it always fails. The user pastes the dead URL here

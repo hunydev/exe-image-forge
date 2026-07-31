@@ -136,8 +136,10 @@ browser ──HTTPS──> exe.dev proxy ──> :8000 vending service
 ```
 
 Each grant adds a metadata-only layer, creating a unique digest and tag without
-duplicating the parent image layers. Expiration removes the tag and route;
-scheduled registry garbage collection later reclaims unreferenced blobs.
+duplicating the parent image layers. Expiration removes the tag and route.
+Reconciliation safely removes old Forge-labeled orphan tags, and stop-the-world
+registry garbage collection later reclaims unreferenced blobs. Builds and
+grants stop before disk pressure reaches a configurable critical threshold.
 
 ## Development
 

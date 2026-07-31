@@ -35,8 +35,13 @@ INSTALL_DIR="${FORGE_INSTALL_DIR:-/opt/exe-image-forge}"
 SERVICE_NAME="${FORGE_SERVICE_NAME:-exe-image-forge-vend.service}"
 REGISTRY_NAME="${FORGE_REGISTRY_NAME:-exe-image-forge-registry}"
 REGISTRY_DATA="${FORGE_REGISTRY_DATA:-/var/lib/exe-image-forge/registry}"
+REGISTRY_LOCK="${FORGE_REGISTRY_LOCK:-$(dirname "$STATE")/registry.lock}"
 VM_NAME="${FORGE_VM_NAME:-$(hostname)}"
 VEND_ADDR="${FORGE_ADDR:-127.0.0.1:8000}"
+MIN_FREE_BYTES="${FORGE_MIN_FREE_BYTES:-2147483648}"
+MAX_DISK_PERCENT="${FORGE_MAX_DISK_PERCENT:-90}"
+BUILD_CACHE_MIN_FREE="${FORGE_BUILD_CACHE_MIN_FREE:-5gb}"
+BUILD_CACHE_RESERVED="${FORGE_BUILD_CACHE_RESERVED:-2gb}"
 
 # The Go service uses this when it needs a full CLI image for the web terminal
 # and credential inspection. Exporting it keeps shell and service behavior in
@@ -85,7 +90,7 @@ variant_args(){
     go|go-gemini|*-go|*-go-gemini) go=1 ;;
   esac
   case "$v" in
-    gemini|go-gemini|*-gemini|*-go-gemini) gemini=1 ;;
+    gemini|go-gemini|*-gemini) gemini=1 ;;
   esac
   echo "--build-arg WITH_CODEX=$codex --build-arg WITH_CLAUDE=$claude --build-arg WITH_GO=$go --build-arg WITH_GEMINI=$gemini"
 }
@@ -93,6 +98,17 @@ variant_args(){
 log(){ printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die(){ printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 warn(){ printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
+
+require_disk_headroom(){
+  local purpose="${1:-operation}" available percent available_bytes
+  read -r available percent < <(
+    df -Pk "$REGISTRY_DATA" | awk 'NR==2 {gsub(/%/,"",$5); print $4, $5}'
+  )
+  available_bytes=$((available * 1024))
+  if [ "$available_bytes" -lt "$MIN_FREE_BYTES" ] || [ "$percent" -ge "$MAX_DISK_PERCENT" ]; then
+    die "$purpose blocked: disk is ${percent}% used with $(numfmt --to=iec "$available_bytes") free; run 'exe-image-forge gc'"
+  fi
+}
 
 ensure_authhome(){
   if [ ! -d "$AUTHHOME" ]; then
@@ -106,6 +122,7 @@ ensure_authhome(){
 
 cmd_build(){
   local args=(--pull) only=""
+  require_disk_headroom "build"
   if [ "${1:-}" = "--fresh" ]; then
     args+=(--build-arg "CLI_REFRESH=$(date +%s)")
     log "forcing fresh AI CLI versions"
@@ -217,6 +234,7 @@ cmd_status(){
 }
 
 cmd_bake(){
+  require_disk_headroom "bake"
   ensure_authhome
   local only="${1:-}"
   CTX=$(mktemp -d)
@@ -487,11 +505,79 @@ cmd_context(){
 }
 
 cmd_gc(){
-  log "pruning dangling images and registry garbage"
-  docker image prune -f
-  docker exec "$REGISTRY_NAME" sh -c 'registry garbage-collect --delete-untagged /etc/docker/registry/config.yml' >/dev/null 2>&1 \
-    && docker restart "$REGISTRY_NAME" >/dev/null \
-    || echo "(registry gc failed; skipping)"
+  local dry_run=0
+  case "${1:-}" in
+    "") ;;
+    --dry-run) dry_run=1 ;;
+    *) die "usage: exe-image-forge gc [--dry-run]" ;;
+  esac
+
+  sudo install -d -o exedev -g exedev -m0700 "$(dirname "$REGISTRY_LOCK")"
+  exec 9>"$REGISTRY_LOCK"
+  flock -w 300 9 || die "timed out waiting for registry operations to finish"
+
+  if [ "$dry_run" = 0 ]; then
+    log "pruning dangling images and bounded build cache"
+    docker image prune -f
+
+    # A grant pulled back through the public proxy creates a tagged local copy.
+    # It is never a build source, so remove these labeled copies even though
+    # ordinary dangling-image pruning cannot see them.
+    while read -r image_id; do
+      [ -n "$image_id" ] || continue
+      docker image rm -f "$image_id" >/dev/null 2>&1 || true
+    done < <(
+      {
+        docker image ls -q --filter label=dev.exe.image-forge.grant
+        docker image ls -q --filter label=dev.huny.grant
+      } | sort -u
+    )
+
+    docker buildx prune -f \
+      --min-free-space "$BUILD_CACHE_MIN_FREE" \
+      --reserved-space "$BUILD_CACHE_RESERVED"
+  else
+    log "dry-run: skipping local image and build-cache pruning"
+  fi
+
+  if ! docker inspect "$REGISTRY_NAME" >/dev/null 2>&1; then
+    warn "registry container '$REGISTRY_NAME' does not exist; skipping registry GC"
+  else
+    local registry_image was_running=0 registry_needs_restart=0 gc_rc=0
+    restore_registry(){
+      if [ "$registry_needs_restart" = 1 ]; then
+        docker start "$REGISTRY_NAME" >/dev/null || true
+        registry_needs_restart=0
+      fi
+    }
+    trap restore_registry EXIT INT TERM
+    registry_image=$(docker inspect -f '{{.Config.Image}}' "$REGISTRY_NAME")
+    [ "$(docker inspect -f '{{.State.Running}}' "$REGISTRY_NAME")" = true ] && was_running=1
+
+    if [ "$dry_run" = 1 ]; then
+      log "registry GC dry-run (no data will be deleted)"
+    else
+      log "stopping registry for stop-the-world garbage collection"
+      [ "$was_running" = 0 ] || registry_needs_restart=1
+      [ "$was_running" = 0 ] || docker stop "$REGISTRY_NAME" >/dev/null
+    fi
+
+    local gc_args=(garbage-collect --delete-untagged)
+    [ "$dry_run" = 0 ] || gc_args+=(--dry-run)
+    gc_args+=(/etc/docker/registry/config.yml)
+    if ! docker run --rm --network none --volumes-from "$REGISTRY_NAME" \
+      --entrypoint registry "$registry_image" "${gc_args[@]}"; then
+      gc_rc=1
+      warn "registry garbage collection failed"
+    fi
+
+    if [ "$dry_run" = 0 ] && [ "$was_running" = 1 ]; then
+      log "restarting registry"
+      restore_registry
+    fi
+    trap - EXIT INT TERM
+    [ "$gc_rc" = 0 ] || return "$gc_rc"
+  fi
   sudo du -sh "$REGISTRY_DATA"
   df -h / | tail -1
 }
@@ -535,7 +621,7 @@ exe-image-forge - custom exe.dev image builder + time-limited image vending
   exe-image-forge token [tok]    store an exe.dev VM token for laptop 'docker pull'
   exe-image-forge vend-build     rebuild/restart the vending service
   exe-image-forge grants         list active grants
-  exe-image-forge gc             prune docker/registry garbage
+  exe-image-forge gc [--dry-run] safely prune Docker, build, and registry garbage
 EOF
   ;;
 esac

@@ -488,8 +488,6 @@ func TestGrantAcceptsSessionInsteadOfPassword(t *testing.T) {
 	tok := a.newSession()
 
 	authed := func(r *http.Request) bool {
-		s.mu.Lock()
-		defer s.mu.Unlock()
 		if s.sessionAuthed != nil && s.sessionAuthed(r) {
 			return true
 		}

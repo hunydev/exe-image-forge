@@ -295,16 +295,18 @@ func (a *admin) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Rate-limit passkey attempts on the same counter the password uses, so a
-	// broken or hostile client cannot hammer this endpoint for free.
-	a.srv.mu.Lock()
-	if time.Now().Before(a.srv.lockout) {
-		wait := int(time.Until(a.srv.lockout).Seconds()) + 1
-		a.srv.mu.Unlock()
+	// Rate-limit passkey attempts by client using the same bounded limiter as
+	// password auth, without touching the independent grant/proxy lock.
+	clientKey := requestClientKey(r)
+	retry, allowed := a.srv.auth.begin(clientKey, time.Now())
+	if !allowed {
+		wait := int(retry.Round(time.Second).Seconds())
+		if wait < 1 {
+			wait = 1
+		}
 		http.Error(w, fmt.Sprintf("too many attempts, retry in %ds", wait), 429)
 		return
 	}
-	a.srv.mu.Unlock()
 
 	discover := func(rawID, userHandle []byte) (webauthn.User, error) {
 		a.pk.mu.Lock()
@@ -317,24 +319,18 @@ func (a *admin) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request)
 	}
 	cred, err := wa.FinishDiscoverableLogin(discover, *sd, r)
 	if err != nil {
-		a.srv.mu.Lock()
-		a.srv.fails++
-		if a.srv.fails >= 5 {
-			a.srv.lockout = time.Now().Add(time.Duration(a.srv.fails-4) * time.Minute)
-		}
-		a.srv.mu.Unlock()
+		a.srv.auth.finish(clientKey, false, time.Now())
 		log.Printf("passkey login failed on %s: %v", rpid, err)
 		http.Error(w, "authentication failed: "+err.Error(), 403)
 		return
 	}
 	if cred.Authenticator.CloneWarning {
+		a.srv.auth.finish(clientKey, false, time.Now())
 		log.Printf("passkey clone warning on %s; refusing", rpid)
 		http.Error(w, "authenticator clone warning; request refused", 403)
 		return
 	}
-	a.srv.mu.Lock()
-	a.srv.fails = 0
-	a.srv.mu.Unlock()
+	a.srv.auth.finish(clientKey, true, time.Now())
 	a.pk.touch(rpid, cred)
 
 	http.SetCookie(w, &http.Cookie{

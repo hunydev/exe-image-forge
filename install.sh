@@ -90,7 +90,7 @@ echo "==> installing files"
 sudo install -d -m0755 /opt/exe-image-forge /etc/exe-image-forge
 sudo install -d -o exedev -g exedev -m0700 \
   /var/lib/exe-image-forge /var/lib/exe-image-forge/authhome
-sudo install -d -m0755 /var/lib/exe-image-forge/registry
+sudo install -d -m0700 /var/lib/exe-image-forge/registry
 sudo install -m0755 "$ROOT/exe-image-forge" /usr/local/bin/exe-image-forge
 sudo install -m0755 "$BUILD_DIR/vend" /opt/exe-image-forge/vend
 
@@ -105,11 +105,17 @@ if ! sudo test -f /etc/exe-image-forge/forge.env; then
     printf 'FORGE_AUTH_HOME="/var/lib/exe-image-forge/authhome"\n'
     printf 'FORGE_INSTALL_DIR="/opt/exe-image-forge"\n'
     printf 'FORGE_REGISTRY_DATA="/var/lib/exe-image-forge/registry"\n'
+    printf 'FORGE_REGISTRY_LOCK="/var/lib/exe-image-forge/registry.lock"\n'
     printf 'FORGE_ADDR="127.0.0.1:8000"\n'
     printf 'FORGE_BASE_IMAGE="%s/base:latest"\n' "$IMAGE_PREFIX"
     printf 'FORGE_COMMAND_PATH="/usr/local/bin/exe-image-forge"\n'
     printf 'FORGE_SERVICE_NAME="exe-image-forge-vend.service"\n'
     printf 'FORGE_REGISTRY_NAME="exe-image-forge-registry"\n'
+    printf 'FORGE_MIN_FREE_BYTES="2147483648"\n'
+    printf 'FORGE_MAX_DISK_PERCENT="90"\n'
+    printf 'FORGE_BUILD_CACHE_MIN_FREE="5gb"\n'
+    printf 'FORGE_BUILD_CACHE_RESERVED="2gb"\n'
+    printf 'FORGE_ORPHAN_GRACE="2h"\n'
     printf 'COMPRESSION="zstd"\n'
     printf 'COMPRESSION_LEVEL="9"\n'
   } > "$ENV_TMP"

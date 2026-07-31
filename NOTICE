@@ -5,3 +5,7 @@ This product includes portions derived from exeuntu:
 https://github.com/boldsoftware/exeuntu
 Copyright 2026 Bold Software, Inc.
 Licensed under the Apache License, Version 2.0.
+
+The embedded browser terminal includes xterm.js and @xterm/addon-fit,
+Copyright (c) 2012-2013 Christopher Jeffrey and other contributors, under the
+MIT License. Complete license texts are included in vend/assets/.

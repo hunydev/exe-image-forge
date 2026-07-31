@@ -2,28 +2,40 @@
 package main
 
 import (
+	"context"
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
-const pbkdfIters = 210000
+const (
+	pbkdfIters          = 210000
+	maxAuthClients      = 2048
+	defaultOrphanGrace  = 2 * time.Hour
+	defaultMinFreeBytes = 2 << 30
+	defaultMaxDiskUse   = 90
+)
 
 type Config struct {
 	// Salt and Hash protect the master password (hex encoded).
@@ -59,10 +71,13 @@ type Grant struct {
 }
 
 type server struct {
-	cfg       Config
-	cfgPath   string
-	statePath string
-	registry  *httputil.ReverseProxy
+	cfg              Config
+	cfgPath          string
+	statePath        string
+	registry         *httputil.ReverseProxy
+	registryURL      *url.URL
+	registryLockPath string
+	orphanGrace      time.Duration
 
 	// sessionAuthed reports whether the request carries a valid admin session.
 	// Set by the admin wiring; kept as a func to avoid an import cycle of
@@ -76,10 +91,177 @@ type server struct {
 	varCache map[string]variantInfo
 	varAt    time.Time
 
+	grantsMu sync.Mutex
+	byToken  map[string]*Grant
+
+	// Authentication throttling is intentionally independent from grants.
+	// A slow password hash or failed-login delay must never block image pulls.
+	auth authLimiter
+
+	// Injectable boundaries keep the grant and registry handlers testable
+	// without requiring Docker.
+	publishImage     func(context.Context, string, string, string) error
+	removeLocalImage func(string) error
+	diskCheck        func() error
+}
+
+type authAttempt struct {
+	failures    int
+	lockedUntil time.Time
+	lastSeen    time.Time
+	inFlight    bool
+}
+
+type authLimiter struct {
 	mu      sync.Mutex
-	byToken map[string]*Grant
-	fails   int
-	lockout time.Time
+	clients map[string]*authAttempt
+}
+
+// Limit expensive PBKDF2 work across all clients. Per-client in-flight
+// tracking below prevents a single address from filling both slots.
+var passwordHashSlots = make(chan struct{}, 2)
+var registryHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+func (l *authLimiter) begin(key string, now time.Time) (time.Duration, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.clients == nil {
+		l.clients = make(map[string]*authAttempt)
+	}
+	if len(l.clients) >= maxAuthClients {
+		for k, a := range l.clients {
+			if now.Sub(a.lastSeen) > 24*time.Hour && !a.inFlight {
+				delete(l.clients, k)
+			}
+		}
+	}
+	a := l.clients[key]
+	if a == nil {
+		// Keep the map bounded even during a distributed spray. Evicting an
+		// old, idle entry only relaxes that old client's limiter.
+		if len(l.clients) >= maxAuthClients {
+			var oldestKey string
+			var oldest time.Time
+			for k, candidate := range l.clients {
+				if candidate.inFlight {
+					continue
+				}
+				if oldestKey == "" || candidate.lastSeen.Before(oldest) {
+					oldestKey, oldest = k, candidate.lastSeen
+				}
+			}
+			if oldestKey != "" {
+				delete(l.clients, oldestKey)
+			} else {
+				return time.Second, false
+			}
+		}
+		a = &authAttempt{}
+		l.clients[key] = a
+	}
+	a.lastSeen = now
+	if now.Before(a.lockedUntil) {
+		return a.lockedUntil.Sub(now), false
+	}
+	if a.inFlight {
+		return time.Second, false
+	}
+	a.inFlight = true
+	return 0, true
+}
+
+func (l *authLimiter) finish(key string, success bool, now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	a := l.clients[key]
+	if a == nil {
+		return
+	}
+	a.inFlight = false
+	a.lastSeen = now
+	if success {
+		delete(l.clients, key)
+		return
+	}
+	a.failures++
+	if a.failures >= 5 {
+		minutes := a.failures - 4
+		if minutes > 15 {
+			minutes = 15
+		}
+		a.lockedUntil = now.Add(time.Duration(minutes) * time.Minute)
+	}
+}
+
+func (l *authLimiter) abort(key string, now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	a := l.clients[key]
+	if a == nil {
+		return
+	}
+	a.inFlight = false
+	a.lastSeen = now
+	if a.failures == 0 {
+		delete(l.clients, key)
+	}
+}
+
+func requestClientKey(r *http.Request) string {
+	// exe.dev appends the address it observed to X-Forwarded-For. Use the
+	// final valid IP rather than the first, which a client could supply.
+	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		if ip := net.ParseIP(strings.TrimSpace(parts[i])); ip != nil {
+			return ip.String()
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		if ip := net.ParseIP(host); ip != nil {
+			return ip.String()
+		}
+	}
+	if ip := net.ParseIP(r.RemoteAddr); ip != nil {
+		return ip.String()
+	}
+	return "local"
+}
+
+func (s *server) checkPassword(r *http.Request, password string) (bool, time.Duration) {
+	key := requestClientKey(r)
+	retry, allowed := s.auth.begin(key, time.Now())
+	if !allowed {
+		return false, retry
+	}
+
+	started := time.Now()
+	select {
+	case passwordHashSlots <- struct{}{}:
+	case <-r.Context().Done():
+		s.auth.abort(key, time.Now())
+		return false, time.Second
+	}
+	ok := subtle.ConstantTimeCompare(
+		[]byte(hashPassword(password, s.cfg.Salt)),
+		[]byte(s.cfg.Hash),
+	) == 1
+	<-passwordHashSlots
+	s.auth.finish(key, ok, time.Now())
+
+	// Keep failed responses uniform without holding either the grant lock or
+	// the limiter lock.
+	if !ok {
+		if remain := 500*time.Millisecond - time.Since(started); remain > 0 {
+			timer := time.NewTimer(remain)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-r.Context().Done():
+			}
+		}
+	}
+	return ok, 0
 }
 
 func randHex(n int) string {
@@ -129,33 +311,44 @@ func hashPassword(pw, saltHex string) string {
 	return hex.EncodeToString(k)
 }
 
-func (s *server) loadState() {
+func (s *server) loadState() error {
 	b, err := os.ReadFile(s.statePath)
 	if err != nil {
-		return
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
 	var gs []*Grant
-	if json.Unmarshal(b, &gs) != nil {
-		return
+	if err := json.Unmarshal(b, &gs); err != nil {
+		return fmt.Errorf("decode grant state: %w", err)
 	}
 	now := time.Now()
 	for _, g := range gs {
-		if g.Expires.After(now) && g.Token != "" {
+		if g != nil && g.Expires.After(now) && g.Token != "" {
 			s.byToken[g.Token] = g
 		}
 	}
+	return nil
 }
 
-func (s *server) saveStateLocked() {
-	var gs []*Grant
+func (s *server) saveStateLocked() error {
+	gs := make([]*Grant, 0, len(s.byToken))
 	for _, g := range s.byToken {
 		gs = append(gs, g)
 	}
-	b, _ := json.MarshalIndent(gs, "", "  ")
-	tmp := s.statePath + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err == nil {
-		os.Rename(tmp, s.statePath)
+	b, err := json.MarshalIndent(gs, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode grant state: %w", err)
 	}
+	tmp := s.statePath + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return fmt.Errorf("write grant state: %w", err)
+	}
+	if err := os.Rename(tmp, s.statePath); err != nil {
+		return fmt.Errorf("commit grant state: %w", err)
+	}
+	return nil
 }
 
 func (s *server) gcLocked() {
@@ -171,45 +364,120 @@ func (s *server) gcLocked() {
 				}
 			}
 			if !shared {
-				go s.deleteTag(repo, tag)
+				go s.deleteTag(context.Background(), repo, tag)
 			}
 		}
 	}
 }
 
-func (s *server) deleteTag(repo, tag string) {
+func (s *server) registryEndpoint(path string) string {
+	base := s.registryURL
+	if base == nil {
+		base, _ = url.Parse("http://127.0.0.1:5000")
+	}
+	u := *base
+	u.Path = path
+	u.RawPath = ""
+	u.RawQuery = ""
+	return u.String()
+}
+
+func (s *server) registryHost() string {
+	if s.registryURL != nil && s.registryURL.Host != "" {
+		return s.registryURL.Host
+	}
+	return "127.0.0.1:5000"
+}
+
+func (s *server) withRegistryLock(ctx context.Context, fn func() error) error {
+	lockPath := s.registryLockPath
+	if lockPath == "" {
+		lockPath = filepath.Join(filepath.Dir(s.statePath), "registry.lock")
+	}
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return fmt.Errorf("create registry lock directory: %w", err)
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("open registry lock: %w", err)
+	}
+	defer f.Close()
+
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			return fmt.Errorf("lock registry: %w", err)
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
+
+func (s *server) deleteTag(ctx context.Context, repo, tag string) {
+	if err := s.withRegistryLock(ctx, func() error {
+		return s.deleteTagLocked(ctx, repo, tag)
+	}); err != nil {
+		log.Printf("expire %s:%s: %v", repo, tag, err)
+	}
+}
+
+func (s *server) deleteTagLocked(ctx context.Context, repo, tag string) error {
 	dig, digErr := s.manifestDigest(repo, tag)
-	ref := fmt.Sprintf("127.0.0.1:5000/%s:%s", repo, tag)
-	if out, err := exec.Command("docker", "rmi", "-f", ref).CombinedOutput(); err != nil {
+	ref := fmt.Sprintf("%s/%s:%s", s.registryHost(), repo, tag)
+	if s.removeLocalImage != nil {
+		if err := s.removeLocalImage(ref); err != nil {
+			log.Printf("rmi %s: %v", ref, err)
+		}
+	} else if out, err := exec.CommandContext(ctx, "docker", "rmi", "-f", ref).CombinedOutput(); err != nil {
 		log.Printf("rmi %s: %v: %s", ref, err, strings.TrimSpace(string(out)))
 	}
 	if digErr != nil {
-		log.Printf("expire %s:%s: digest lookup failed: %v", repo, tag, digErr)
-		return
+		return fmt.Errorf("digest lookup failed: %w", digErr)
 	}
-	req, _ := http.NewRequest("DELETE", "http://127.0.0.1:5000/v2/"+repo+"/manifests/"+dig, nil)
-	resp, err := http.DefaultClient.Do(req)
+	req, _ := http.NewRequestWithContext(ctx, "DELETE",
+		s.registryEndpoint("/v2/"+repo+"/manifests/"+dig), nil)
+	resp, err := registryHTTPClient.Do(req)
 	if err != nil {
-		log.Printf("expire %s:%s: %v", repo, tag, err)
-		return
+		return err
 	}
 	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("registry delete %s", resp.Status)
+	}
 	log.Printf("expired %s:%s (registry delete %s)", repo, tag, resp.Status)
+	return nil
 }
 
 func (s *server) manifestDigest(repo, tag string) (string, error) {
-	req, _ := http.NewRequest("HEAD", "http://127.0.0.1:5000/v2/"+repo+"/manifests/"+tag, nil)
+	req, _ := http.NewRequest("HEAD",
+		s.registryEndpoint("/v2/"+repo+"/manifests/"+tag), nil)
 	req.Header.Set("Accept", strings.Join([]string{
 		"application/vnd.oci.image.index.v1+json",
 		"application/vnd.oci.image.manifest.v1+json",
 		"application/vnd.docker.distribution.manifest.list.v2+json",
 		"application/vnd.docker.distribution.manifest.v2+json",
 	}, ", "))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := registryHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", os.ErrNotExist
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("registry returned %s", resp.Status)
+	}
 	d := resp.Header.Get("Docker-Content-Digest")
 	if d == "" {
 		return "", errors.New("no digest")
@@ -217,12 +485,191 @@ func (s *server) manifestDigest(repo, tag string) (string, error) {
 	return d, nil
 }
 
+func isGrantTag(tag string) bool {
+	if len(tag) != 16 {
+		return false
+	}
+	for _, c := range tag {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *server) registryJSON(ctx context.Context, path, accept string, out any) error {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.registryEndpoint(path), nil)
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	resp, err := registryHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return os.ErrNotExist
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("registry returned %s", resp.Status)
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(out)
+}
+
+func (s *server) grantTagMetadata(ctx context.Context, repo, tag string) (time.Time, string, error) {
+	var manifest struct {
+		Config struct {
+			Digest string `json:"digest"`
+		} `json:"config"`
+	}
+	accept := strings.Join([]string{
+		"application/vnd.oci.image.manifest.v1+json",
+		"application/vnd.docker.distribution.manifest.v2+json",
+	}, ", ")
+	if err := s.registryJSON(ctx, "/v2/"+repo+"/manifests/"+tag, accept, &manifest); err != nil {
+		return time.Time{}, "", err
+	}
+	if manifest.Config.Digest == "" {
+		return time.Time{}, "", errors.New("manifest has no config digest")
+	}
+	var config struct {
+		Created string `json:"created"`
+		Config  struct {
+			Labels map[string]string `json:"Labels"`
+		} `json:"config"`
+	}
+	if err := s.registryJSON(ctx, "/v2/"+repo+"/blobs/"+manifest.Config.Digest, "", &config); err != nil {
+		return time.Time{}, "", err
+	}
+	created, err := time.Parse(time.RFC3339Nano, config.Created)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("invalid image creation time: %w", err)
+	}
+	label := config.Config.Labels["dev.exe.image-forge.grant"]
+	if label == "" {
+		// Pre-public releases used this label. Keeping it in the recognizer
+		// lets upgraded installations safely reconcile their old grant tags.
+		label = config.Config.Labels["dev.huny.grant"]
+	}
+	return created, label, nil
+}
+
+// reconcileOrphans removes only old tags that can be proven to have been
+// created by this service and no longer have an active grant. Normal image
+// tags and unknown registry content are never touched.
+func (s *server) reconcileOrphans(ctx context.Context, dryRun bool) (int, error) {
+	active := make(map[string]bool)
+	s.grantsMu.Lock()
+	for _, g := range s.byToken {
+		active[g.Repo+":"+g.Tag] = true
+	}
+	s.grantsMu.Unlock()
+
+	grace := s.orphanGrace
+	if grace <= 0 {
+		grace = defaultOrphanGrace
+	}
+	now := time.Now()
+	eligible := 0
+	var errs []error
+	for _, repo := range s.cfg.Repos {
+		var listing struct {
+			Tags []string `json:"tags"`
+		}
+		if err := s.registryJSON(ctx, "/v2/"+repo+"/tags/list", "", &listing); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("list tags for %s: %w", repo, err))
+			}
+			continue
+		}
+		for _, tag := range listing.Tags {
+			if !isGrantTag(tag) || active[repo+":"+tag] {
+				continue
+			}
+			created, label, err := s.grantTagMetadata(ctx, repo, tag)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("inspect %s:%s: %w", repo, tag, err))
+				continue
+			}
+			if label != tag || now.Sub(created) < grace {
+				continue
+			}
+			eligible++
+			if dryRun {
+				log.Printf("orphan dry-run: would remove %s:%s (created %s)",
+					repo, tag, created.UTC().Format(time.RFC3339))
+				continue
+			}
+			if err := s.withRegistryLock(ctx, func() error {
+				return s.deleteTagLocked(ctx, repo, tag)
+			}); err != nil {
+				errs = append(errs, fmt.Errorf("delete orphan %s:%s: %w", repo, tag, err))
+			} else {
+				log.Printf("removed orphan grant %s:%s", repo, tag)
+			}
+		}
+	}
+	return eligible, errors.Join(errs...)
+}
+
+func envInt64(name string, fallback int64) int64 {
+	if raw := os.Getenv(name); raw != "" {
+		if value, err := strconv.ParseInt(raw, 10, 64); err == nil && value >= 0 {
+			return value
+		}
+	}
+	return fallback
+}
+
+func (s *server) ensureDiskHeadroom() error {
+	if s.diskCheck != nil {
+		return s.diskCheck()
+	}
+	path := os.Getenv("FORGE_REGISTRY_DATA")
+	if path == "" {
+		path = filepath.Dir(s.statePath)
+	}
+	if path == "" {
+		path = "/"
+	}
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return fmt.Errorf("disk check: %w", err)
+	}
+	total := int64(st.Blocks) * int64(st.Bsize)
+	available := int64(st.Bavail) * int64(st.Bsize)
+	if total <= 0 {
+		return errors.New("disk check returned no capacity")
+	}
+	usedPercent := (total - available) * 100 / total
+	minFree := envInt64("FORGE_MIN_FREE_BYTES", defaultMinFreeBytes)
+	maxUse := envInt64("FORGE_MAX_DISK_PERCENT", defaultMaxDiskUse)
+	if available < minFree || usedPercent >= maxUse {
+		return fmt.Errorf(
+			"insufficient disk headroom: %d%% used, %.1f GiB available (requires < %d%% and %.1f GiB free)",
+			usedPercent, float64(available)/(1<<30), maxUse, float64(minFree)/(1<<30),
+		)
+	}
+	return nil
+}
+
+func (s *server) publishGrant(ctx context.Context, repo, variant, tag string) error {
+	if err := s.ensureDiskHeadroom(); err != nil {
+		return err
+	}
+	return s.withRegistryLock(ctx, func() error {
+		if s.publishImage != nil {
+			return s.publishImage(ctx, repo, variant, tag)
+		}
+		return s.publish(ctx, repo, variant, tag)
+	})
+}
+
 // publish creates a per-grant image (a metadata-only layer on top of the
 // source image, so the digest is unique to this tag) and pushes it. A unique
 // digest matters: registry deletion works on digests, so tags sharing a digest
 // could not be expired independently.
-// publish creates a per-grant tag pointing at the chosen variant of repo.
-func (s *server) publish(repo, variant, tag string) error {
+func (s *server) publish(ctx context.Context, repo, variant, tag string) error {
 	src := s.cfg.SourceImage[repo]
 	if src == "" {
 		return fmt.Errorf("no source image configured for %q", repo)
@@ -232,14 +679,14 @@ func (s *server) publish(repo, variant, tag string) error {
 	if variant != "" {
 		if base, _, ok := strings.Cut(src, ":"); ok {
 			cand := base + ":" + variant
-			if err := exec.Command("docker", "image", "inspect", cand).Run(); err == nil {
+			if err := exec.CommandContext(ctx, "docker", "image", "inspect", cand).Run(); err == nil {
 				src = cand
 			} else {
 				return fmt.Errorf("variant %q of %s is not built yet", variant, repo)
 			}
 		}
 	}
-	if out, err := exec.Command("docker", "image", "inspect", src).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "docker", "image", "inspect", src).CombinedOutput(); err != nil {
 		return fmt.Errorf("source image %s missing: %s", src, out)
 	}
 	dir, err := os.MkdirTemp("", "vend-")
@@ -251,7 +698,7 @@ func (s *server) publish(repo, variant, tag string) error {
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(df), 0o644); err != nil {
 		return err
 	}
-	dst := fmt.Sprintf("127.0.0.1:5000/%s:%s", repo, tag)
+	dst := fmt.Sprintf("%s/%s:%s", s.registryHost(), repo, tag)
 	// zstd rather than gzip: ~20% smaller on the wire and several times faster
 	// to decompress, which is most of what the user waits for after the bytes
 	// land. force-compression is required -- without it buildx passes through
@@ -259,7 +706,7 @@ func (s *server) publish(repo, variant, tag string) error {
 	//
 	// This builds and pushes in one step; the blobs are already in the
 	// registry from the parent image, so it is a metadata-only push.
-	out, err := exec.Command("docker", "buildx", "build",
+	out, err := exec.CommandContext(ctx, "docker", "buildx", "build",
 		"--provenance=false", "--sbom=false",
 		"--output", "type=image,name="+dst+
 			",compression=zstd,compression-level=9,force-compression=true,push=true",
@@ -363,34 +810,31 @@ func (s *server) handleGrant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json", 400)
 		return
 	}
-	s.mu.Lock()
-	if time.Now().Before(s.lockout) {
-		wait := int(time.Until(s.lockout).Seconds()) + 1
-		s.mu.Unlock()
-		w.Header().Set("Retry-After", fmt.Sprint(wait))
-		http.Error(w, fmt.Sprintf("too many attempts, retry in %ds", wait), 429)
-		return
-	}
 	// A passkey session is as good as the password here: it was established by
 	// a stronger authentication, so requiring the password again would be
 	// theatre. Checked first so an empty password field is not penalised.
 	ok := s.sessionAuthed != nil && s.sessionAuthed(r)
 	if !ok {
-		ok = subtle.ConstantTimeCompare([]byte(hashPassword(req.Password, s.cfg.Salt)), []byte(s.cfg.Hash)) == 1
+		var retry time.Duration
+		ok, retry = s.checkPassword(r, req.Password)
+		if retry > 0 {
+			wait := int(retry.Round(time.Second).Seconds())
+			if wait < 1 {
+				wait = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(wait))
+			http.Error(w, fmt.Sprintf("too many attempts, retry in %ds", wait), http.StatusTooManyRequests)
+			return
+		}
 	}
 	if !ok {
-		s.fails++
-		if s.fails >= 5 {
-			s.lockout = time.Now().Add(time.Duration(s.fails-4) * time.Minute)
-		}
-		s.mu.Unlock()
-		time.Sleep(500 * time.Millisecond)
 		http.Error(w, "wrong password", 403)
 		return
 	}
-	s.fails = 0
+
+	s.grantsMu.Lock()
 	s.gcLocked()
-	s.mu.Unlock()
+	s.grantsMu.Unlock()
 
 	repo := req.Repo
 	if repo == "" {
@@ -416,7 +860,7 @@ func (s *server) handleGrant(w http.ResponseWriter, r *http.Request) {
 
 	variant := variantFor(defaultTrue(req.WithCodex), defaultTrue(req.WithClaude), req.WithGo, req.WithGemini)
 	tag := randHex(8)
-	if err := s.publish(repo, variant, tag); err != nil {
+	if err := s.publishGrant(r.Context(), repo, variant, tag); err != nil {
 		log.Printf("publish: %v", err)
 		http.Error(w, "publish failed: "+err.Error(), 500)
 		return
@@ -429,10 +873,17 @@ func (s *server) handleGrant(w http.ResponseWriter, r *http.Request) {
 		Created: time.Now(),
 		Expires: time.Now().Add(time.Duration(ttl) * time.Minute),
 	}
-	s.mu.Lock()
+	s.grantsMu.Lock()
 	s.byToken[g.Token] = g
-	s.saveStateLocked()
-	s.mu.Unlock()
+	if err := s.saveStateLocked(); err != nil {
+		delete(s.byToken, g.Token)
+		s.grantsMu.Unlock()
+		go s.deleteTag(context.Background(), repo, tag)
+		log.Printf("save grant: %v", err)
+		http.Error(w, "could not persist grant", http.StatusInternalServerError)
+		return
+	}
+	s.grantsMu.Unlock()
 
 	host := s.pullHost(r)
 	image := fmt.Sprintf("%s/t/%s/%s:%s", host, g.Token, repo, tag)
@@ -487,7 +938,7 @@ func (s *server) handleV2(w http.ResponseWriter, r *http.Request) {
 	}
 	token, tail := rest[:slash], rest[slash+1:]
 
-	s.mu.Lock()
+	s.grantsMu.Lock()
 	s.gcLocked()
 	g := s.byToken[token]
 	ok := g != nil && g.Expires.After(time.Now()) &&
@@ -495,7 +946,7 @@ func (s *server) handleV2(w http.ResponseWriter, r *http.Request) {
 	if ok {
 		g.Uses++
 	}
-	s.mu.Unlock()
+	s.grantsMu.Unlock()
 	if !ok {
 		deny(404)
 		return
@@ -521,6 +972,68 @@ func (s *server) bakedAt() string {
 		}
 	}
 	return ""
+}
+
+func inlineSourceHashes(page []byte, tag string) []string {
+	source := string(page)
+	lower := strings.ToLower(source)
+	openPrefix := "<" + tag
+	closeTag := "</" + tag + ">"
+	var hashes []string
+	for offset := 0; offset < len(source); {
+		startRel := strings.Index(lower[offset:], openPrefix)
+		if startRel < 0 {
+			break
+		}
+		start := offset + startRel
+		openEndRel := strings.IndexByte(source[start:], '>')
+		if openEndRel < 0 {
+			break
+		}
+		openEnd := start + openEndRel
+		closeRel := strings.Index(lower[openEnd+1:], closeTag)
+		if closeRel < 0 {
+			break
+		}
+		closeStart := openEnd + 1 + closeRel
+		openTag := lower[start : openEnd+1]
+		if tag != "script" || !strings.Contains(openTag, "src=") {
+			sum := sha256.Sum256([]byte(source[openEnd+1 : closeStart]))
+			hashes = append(hashes, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
+		}
+		offset = closeStart + len(closeTag)
+	}
+	return hashes
+}
+
+func pageCSP(page []byte) string {
+	scripts := append([]string{"'self'"}, inlineSourceHashes(page, "script")...)
+	styles := append([]string{"'self'"}, inlineSourceHashes(page, "style")...)
+	return strings.Join([]string{
+		"default-src 'none'",
+		"script-src " + strings.Join(scripts, " "),
+		"style-src-elem " + strings.Join(styles, " "),
+		"style-src-attr 'unsafe-inline'",
+		"img-src 'self' data:",
+		"font-src 'self'",
+		"connect-src 'self'",
+		"base-uri 'none'",
+		"form-action 'self'",
+		"frame-ancestors 'none'",
+		"object-src 'none'",
+	}, "; ")
+}
+
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func main() {
@@ -588,24 +1101,61 @@ func main() {
 		log.Fatal(err)
 	}
 	s := &server{
-		cfg:       cfg,
-		cfgPath:   *cfgPath,
-		statePath: *statePath,
-		registry:  httputil.NewSingleHostReverseProxy(ru),
-		byToken:   map[string]*Grant{},
+		cfg:              cfg,
+		cfgPath:          *cfgPath,
+		statePath:        *statePath,
+		registry:         httputil.NewSingleHostReverseProxy(ru),
+		registryURL:      ru,
+		registryLockPath: os.Getenv("FORGE_REGISTRY_LOCK"),
+		orphanGrace:      defaultOrphanGrace,
+		byToken:          map[string]*Grant{},
+	}
+	if s.registryLockPath == "" {
+		s.registryLockPath = filepath.Join(filepath.Dir(*statePath), "registry.lock")
+	}
+	if raw := os.Getenv("FORGE_ORPHAN_GRACE"); raw != "" {
+		if value, err := time.ParseDuration(raw); err == nil && value >= time.Hour {
+			s.orphanGrace = value
+		} else {
+			log.Fatalf("FORGE_ORPHAN_GRACE must be a duration of at least 1h")
+		}
 	}
 	os.MkdirAll(filepath.Dir(*statePath), 0o700)
-	s.loadState()
+	if err := s.loadState(); err != nil {
+		log.Fatalf("grant state: %v", err)
+	}
 
 	go func() {
-		for range time.Tick(time.Minute) {
-			s.mu.Lock()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.grantsMu.Lock()
 			n := len(s.byToken)
 			s.gcLocked()
 			if n != len(s.byToken) {
-				s.saveStateLocked()
+				if err := s.saveStateLocked(); err != nil {
+					log.Printf("save expired grant state: %v", err)
+				}
 			}
-			s.mu.Unlock()
+			s.grantsMu.Unlock()
+		}
+	}()
+	go func() {
+		// A grace period protects a push that completed immediately before a
+		// crash. Reconcile once on startup and periodically thereafter.
+		if n, err := s.reconcileOrphans(context.Background(), false); err != nil {
+			log.Printf("orphan reconciliation: %v", err)
+		} else if n > 0 {
+			log.Printf("orphan reconciliation removed %d tag(s)", n)
+		}
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if n, err := s.reconcileOrphans(context.Background(), false); err != nil {
+				log.Printf("orphan reconciliation: %v", err)
+			} else if n > 0 {
+				log.Printf("orphan reconciliation removed %d tag(s)", n)
+			}
 		}
 	}()
 
@@ -644,12 +1194,29 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", pageCSP(adminHTML))
 		w.Write(adminHTML)
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.HandleFunc("/passkey.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
 		w.Write(passkeyJS)
+	})
+	mux.HandleFunc("/assets/xterm.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(xtermJS)
+	})
+	mux.HandleFunc("/assets/addon-fit.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(addonFitJS)
+	})
+	mux.HandleFunc("/assets/xterm.css", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(xtermCSS)
 	})
 	mux.HandleFunc("/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
@@ -661,10 +1228,10 @@ func main() {
 	})
 	mux.HandleFunc("/api/info", func(w http.ResponseWriter, r *http.Request) {
 		// Computed before taking the lock: it shells out to docker, and holding
-		// s.mu across that would stall every concurrent grant.
+		// grantsMu across that would stall every concurrent grant.
 		vars := s.variants()
-		s.mu.Lock()
-		defer s.mu.Unlock()
+		s.grantsMu.Lock()
+		defer s.grantsMu.Unlock()
 		s.gcLocked()
 		out := map[string]any{
 			"repos": s.repoInfo(), "pull_host": s.cfg.PullHost,
@@ -690,11 +1257,15 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Security-Policy", pageCSP(indexHTML))
 		w.Write(indexHTML)
 	})
 
 	log.Printf("vend listening on %s (pull host %s, repos %v)", *addr, cfg.PullHost, cfg.Repos)
-	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 20 * time.Second}
+	srv := &http.Server{
+		Addr: *addr, Handler: withSecurityHeaders(mux),
+		ReadHeaderTimeout: 20 * time.Second,
+	}
 	log.Fatal(srv.ListenAndServe())
 }
 
