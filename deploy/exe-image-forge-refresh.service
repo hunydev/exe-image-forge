@@ -1,5 +1,5 @@
 [Unit]
-Description=Refresh hunydev images with the latest AI CLI releases
+Description=Refresh exe-image-forge images with the latest AI CLI releases
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service
@@ -8,7 +8,7 @@ Requires=docker.service
 Type=oneshot
 User=exedev
 SupplementaryGroups=docker
-ExecStart=/usr/local/bin/hunyimg refresh
+ExecStart=/usr/local/bin/exe-image-forge refresh
 TimeoutStartSec=60min
 Nice=10
 IOSchedulingClass=idle

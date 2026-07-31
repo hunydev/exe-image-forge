@@ -90,6 +90,36 @@ func randHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
+// imageRepo removes a tag from a local Docker image reference while preserving
+// a registry port (for example localhost:5000/team/image:tag).
+func imageRepo(ref string) string {
+	if i := strings.LastIndexByte(ref, ':'); i > strings.LastIndexByte(ref, '/') {
+		return ref[:i]
+	}
+	return ref
+}
+
+// baseImage returns the configured base image. The environment variable is
+// shared with the CLI through forge.env; deriving from source_image keeps older
+// config files working without a migration.
+func (s *server) baseImage() string {
+	if img := os.Getenv("FORGE_BASE_IMAGE"); img != "" {
+		return img
+	}
+	for repo, img := range s.cfg.SourceImage {
+		if strings.HasSuffix(repo, "/base") || repo == "base" {
+			return img
+		}
+	}
+	if s.cfg.DevImage != "" {
+		repo := imageRepo(s.cfg.DevImage)
+		if strings.HasSuffix(repo, "/dev") {
+			return strings.TrimSuffix(repo, "/dev") + "/base:latest"
+		}
+	}
+	return "exe-image-forge/base:latest"
+}
+
 func hashPassword(pw, saltHex string) string {
 	salt, _ := hex.DecodeString(saltHex)
 	k, err := pbkdf2.Key(sha256.New, pw, salt, pbkdfIters, 32)
@@ -217,7 +247,7 @@ func (s *server) publish(repo, variant, tag string) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	df := fmt.Sprintf("FROM %s\nLABEL dev.huny.grant=%s\n", src, tag)
+	df := fmt.Sprintf("FROM %s\nLABEL dev.exe.image-forge.grant=%s\n", src, tag)
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(df), 0o644); err != nil {
 		return err
 	}
@@ -241,7 +271,7 @@ func (s *server) publish(repo, variant, tag string) error {
 }
 
 // pullHost returns the registry hostname the client should use: the host it
-// reached us on (so both images.huny.dev and *.exe.xyz work), falling back to
+// reached us on (so both custom domains and *.exe.xyz work), falling back to
 // the configured value.
 func (s *server) pullHost(r *http.Request) string {
 	h := r.Header.Get("X-Forwarded-Host")
@@ -457,18 +487,20 @@ func (s *server) bakedAt() string {
 	if img == "" {
 		return ""
 	}
-	out, err := exec.Command("docker", "image", "inspect", img,
-		"--format", `{{index .Config.Labels "dev.huny.baked"}}`).Output()
-	if err != nil {
-		return ""
+	for _, label := range []string{"dev.exe.image-forge.baked", "dev.huny.baked"} {
+		out, err := exec.Command("docker", "image", "inspect", img,
+			"--format", fmt.Sprintf(`{{index .Config.Labels %q}}`, label)).Output()
+		if err == nil && strings.TrimSpace(string(out)) != "" {
+			return strings.TrimSpace(string(out))
+		}
 	}
-	return strings.TrimSpace(string(out))
+	return ""
 }
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8000", "listen address")
-	cfgPath := flag.String("config", "/etc/hunyimg/config.json", "config file")
-	statePath := flag.String("state", "/var/lib/hunyimg/grants.json", "grant state file")
+	cfgPath := flag.String("config", "/etc/exe-image-forge/config.json", "config file")
+	statePath := flag.String("state", "/var/lib/exe-image-forge/grants.json", "grant state file")
 	registryURL := flag.String("registry", "http://127.0.0.1:5000", "backing registry")
 	setPassword := flag.Bool("set-password", false, "read a new master password from stdin and exit")
 	flag.Parse()
@@ -508,13 +540,21 @@ func main() {
 		log.Fatal("config: repos empty")
 	}
 	if cfg.AuthHome == "" {
-		cfg.AuthHome = "/var/lib/hunyimg/authhome"
+		cfg.AuthHome = "/var/lib/exe-image-forge/authhome"
 	}
 	if cfg.DevImage == "" {
-		cfg.DevImage = "hunydev/dev:latest"
+		for _, repo := range cfg.Repos {
+			if strings.HasSuffix(repo, "/dev") || repo == "dev" {
+				cfg.DevImage = cfg.SourceImage[repo]
+				break
+			}
+		}
+		if cfg.DevImage == "" {
+			cfg.DevImage = "exe-image-forge/dev:latest"
+		}
 	}
 	if cfg.PasskeyFile == "" {
-		cfg.PasskeyFile = "/var/lib/hunyimg/passkeys.json"
+		cfg.PasskeyFile = filepath.Join(filepath.Dir(cfg.AuthHome), "passkeys.json")
 	}
 
 	ru, err := url.Parse(*registryURL)
@@ -603,7 +643,7 @@ func main() {
 			"ttl_minutes": s.cfg.TTLMinutes, "active_count": len(s.byToken),
 			"variants": vars,
 		}
-		// Only a local caller (the hunyimg CLI) sees grant detail; the
+		// Only a local caller (the exe-image-forge CLI) sees grant detail; the
 		// proxy always sets X-Forwarded-For for remote requests.
 		if r.Header.Get("X-Forwarded-For") == "" && strings.HasPrefix(r.RemoteAddr, "127.0.0.1") {
 			type act struct{ Repo, Tag, Expires string }

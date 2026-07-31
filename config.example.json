@@ -1,0 +1,18 @@
+{
+  "salt": "",
+  "hash": "",
+  "pull_host": "my-forge-vm.exe.xyz",
+  "repos": [
+    "exe-image-forge/dev",
+    "exe-image-forge/base"
+  ],
+  "source_image": {
+    "exe-image-forge/dev": "exe-image-forge/dev:latest",
+    "exe-image-forge/base": "exe-image-forge/base:latest"
+  },
+  "ttl_minutes": 30,
+  "vm_token": "",
+  "auth_home": "/var/lib/exe-image-forge/authhome",
+  "dev_image": "exe-image-forge/dev:latest",
+  "passkey_file": "/var/lib/exe-image-forge/passkeys.json"
+}

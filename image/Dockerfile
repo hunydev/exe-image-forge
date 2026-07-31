@@ -1,4 +1,4 @@
-# hunydev base image: slim, exeuntu-compatible dev image.
+# exe-image-forge base image: slim, exeuntu-compatible dev image.
 # Derived in part from https://github.com/boldsoftware/exeuntu (Apache-2.0).
 FROM ubuntu:24.04
 
@@ -146,7 +146,7 @@ RUN if [ "$WITH_GO" = "1" ]; then \
 
 # Record the final tool set, now that the optional pieces are decided.
 ARG VARIANT=min
-RUN echo "$VARIANT" > /etc/hunydev-variant && \
+RUN echo "$VARIANT" > /etc/exe-image-forge-variant && \
     /usr/local/bin/write-versions && cat /etc/ai-cli-versions.json && \
     /usr/local/bin/write-agent-context && \
     chown -R 1000:1000 /home/exedev/.codex /home/exedev/.claude /home/exedev/.gemini
@@ -175,5 +175,5 @@ ENV EXEUNTU=1
 EXPOSE 8000 9999
 LABEL "exe.dev/login-user"="exedev"
 LABEL "exe.dev/install-shelley"="true"
-LABEL "dev.huny.image"="base"
+LABEL "dev.exe.image-forge.image"="base"
 CMD ["/usr/local/bin/init"]

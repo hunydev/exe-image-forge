@@ -178,7 +178,7 @@ func req(method, path string, body []byte, host, cookie string) *http.Request {
 // TestPasskeyFullCeremony registers a credential and then logs in with it,
 // with no password involved in the second step.
 func TestPasskeyFullCeremony(t *testing.T) {
-	const host = "images.huny.dev"
+	const host = "images.example.com"
 	a := newTestAdmin(t)
 	tok := a.newSession()
 
@@ -274,7 +274,7 @@ func TestPasskeyFullCeremony(t *testing.T) {
 // is the property that makes it safe to serve the same admin page on both the
 // exe.xyz name and a custom domain.
 func TestPasskeyIsScopedToDomain(t *testing.T) {
-	const host = "images.huny.dev"
+	const host = "images.example.com"
 	a := newTestAdmin(t)
 	tok := a.newSession()
 
@@ -294,18 +294,18 @@ func TestPasskeyIsScopedToDomain(t *testing.T) {
 
 	// Same credential, different host: login must not even start.
 	w = httptest.NewRecorder()
-	a.handlePasskeyLoginBegin(w, req("POST", "/x", nil, "hunydev-images.exe.xyz", ""))
+	a.handlePasskeyLoginBegin(w, req("POST", "/x", nil, "image-forge.exe.xyz", ""))
 	if w.Code != 404 {
 		t.Errorf("login/begin on other domain: %d, want 404", w.Code)
 	}
-	if n := len(a.pk.forRP("hunydev-images.exe.xyz")); n != 0 {
+	if n := len(a.pk.forRP("image-forge.exe.xyz")); n != 0 {
 		t.Errorf("other domain sees %d keys, want 0", n)
 	}
 }
 
 // A replayed or forged assertion must be rejected.
 func TestPasskeyRejectsBadAssertion(t *testing.T) {
-	const host = "images.huny.dev"
+	const host = "images.example.com"
 	origin := "https://" + host
 	a := newTestAdmin(t)
 	tok := a.newSession()
@@ -390,7 +390,7 @@ func TestPasskeyDeleteAndListScoping(t *testing.T) {
 	a := newTestAdmin(t)
 	tok := a.newSession()
 	// Two keys on different hostnames.
-	for _, host := range []string{"images.huny.dev", "hunydev-images.exe.xyz"} {
+	for _, host := range []string{"images.example.com", "image-forge.exe.xyz"} {
 		w := httptest.NewRecorder()
 		a.require(a.handlePasskeyRegisterBegin)(w, req("POST", "/x", nil, host, tok))
 		var c struct {
@@ -410,7 +410,7 @@ func TestPasskeyDeleteAndListScoping(t *testing.T) {
 	// so a key registered elsewhere is visible and removable rather than
 	// becoming invisible cruft.
 	w := httptest.NewRecorder()
-	a.require(a.handlePasskeyList)(w, req("GET", "/x", nil, "images.huny.dev", tok))
+	a.require(a.handlePasskeyList)(w, req("GET", "/x", nil, "images.example.com", tok))
 	var list struct {
 		Passkeys []struct {
 			ID      string `json:"id"`
@@ -441,7 +441,7 @@ func TestPasskeyDeleteAndListScoping(t *testing.T) {
 	}
 	body, _ := json.Marshal(target)
 	w = httptest.NewRecorder()
-	a.require(a.handlePasskeyDelete)(w, req("POST", "/x", body, "images.huny.dev", tok))
+	a.require(a.handlePasskeyDelete)(w, req("POST", "/x", body, "images.example.com", tok))
 	if w.Code != 200 {
 		t.Fatalf("delete: %d %s", w.Code, w.Body)
 	}
@@ -451,7 +451,7 @@ func TestPasskeyDeleteAndListScoping(t *testing.T) {
 
 	// Deleting again must 404 rather than silently succeed.
 	w = httptest.NewRecorder()
-	a.require(a.handlePasskeyDelete)(w, req("POST", "/x", body, "images.huny.dev", tok))
+	a.require(a.handlePasskeyDelete)(w, req("POST", "/x", body, "images.example.com", tok))
 	if w.Code != 404 {
 		t.Errorf("second delete: %d, want 404", w.Code)
 	}
@@ -469,7 +469,7 @@ func TestPasskeyEndpointsNeedSession(t *testing.T) {
 		{"delete", a.handlePasskeyDelete},
 	} {
 		w := httptest.NewRecorder()
-		a.require(tc.h)(w, req("POST", "/x", []byte("{}"), "images.huny.dev", ""))
+		a.require(tc.h)(w, req("POST", "/x", []byte("{}"), "images.example.com", ""))
 		if w.Code != 401 {
 			t.Errorf("%s: %d, want 401", tc.name, w.Code)
 		}
@@ -495,13 +495,13 @@ func TestGrantAcceptsSessionInsteadOfPassword(t *testing.T) {
 		}
 		return false
 	}
-	if !authed(req("POST", "/api/grant", nil, "images.huny.dev", tok)) {
+	if !authed(req("POST", "/api/grant", nil, "images.example.com", tok)) {
 		t.Error("valid session not recognised by the grant path")
 	}
-	if authed(req("POST", "/api/grant", nil, "images.huny.dev", "")) {
+	if authed(req("POST", "/api/grant", nil, "images.example.com", "")) {
 		t.Error("missing cookie accepted")
 	}
-	if authed(req("POST", "/api/grant", nil, "images.huny.dev", "bogus-token")) {
+	if authed(req("POST", "/api/grant", nil, "images.example.com", "bogus-token")) {
 		t.Error("forged session token accepted")
 	}
 }

@@ -102,7 +102,7 @@ for t in $only; do
   esac
 done
 
-# Refresh the manifest so `hunyimg versions` reflects what just happened.
+# Refresh the manifest so `exe-image-forge versions` reflects what just happened.
 /usr/local/bin/write-versions 2>/dev/null || true
 
 exit $rc

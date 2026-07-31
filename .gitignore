@@ -1,1 +1,9 @@
 /vend/vend
+/.env
+/.env.*
+!/forge.env.example
+/config.json
+/authhome/
+/registry/
+/*.tar
+/*.tar.gz

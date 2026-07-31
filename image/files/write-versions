@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Write the tool version manifest read by `hunyimg versions` and the admin UI.
+# Write the tool version manifest read by `exe-image-forge versions` and the admin UI.
 # Kept separate from update-ai-clis because the optional components (go, gemini)
 # are layered on afterwards, and the manifest must describe the finished image.
 set -uo pipefail

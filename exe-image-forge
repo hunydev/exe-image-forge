@@ -1,21 +1,48 @@
 #!/usr/bin/env bash
-# hunyimg - build & vend custom exe.dev-compatible images with pre-authenticated AI CLIs.
+# exe-image-forge - build & vend custom exe.dev-compatible images with pre-authenticated AI CLIs.
 set -euo pipefail
 
-ROOT=/home/exedev/hunyimg
-AUTHHOME=/var/lib/hunyimg/authhome
-BASE=hunydev/base:latest
+# Host-specific values live outside the repository. The systemd units load the
+# same file, and FORGE_ENV_FILE makes isolated/test installations possible.
+ENV_FILE="${FORGE_ENV_FILE:-/etc/exe-image-forge/forge.env}"
+if [ -r "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT="${FORGE_ROOT:-$SCRIPT_DIR}"
+AUTHHOME="${FORGE_AUTH_HOME:-/var/lib/exe-image-forge/authhome}"
+IMAGE_PREFIX="${FORGE_IMAGE_PREFIX:-exe-image-forge}"
+BASE_REPO="${IMAGE_PREFIX}/base"
+DEV_REPO="${IMAGE_PREFIX}/dev"
+BASE="${BASE_REPO}:latest"
 # The variant containing every CLI: used for logins and for credential
 # conversion, since the lean ones omit gemini.
-BASE_FULL=hunydev/base:go-gemini
+BASE_FULL="${BASE_REPO}:go-gemini"
 
 # Layer compression. zstd decompresses far faster than gzip and produces
 # smaller blobs; the registry, docker and containerd all understand it. Set
 # COMPRESSION=gzip if you ever need to serve a client that does not.
 COMPRESSION=${COMPRESSION:-zstd}
 COMPRESSION_LEVEL=${COMPRESSION_LEVEL:-9}
-DEV=hunydev/dev:latest
-CFG=/etc/hunyimg/config.json
+DEV="${DEV_REPO}:latest"
+CFG="${FORGE_CONFIG:-/etc/exe-image-forge/config.json}"
+STATE="${FORGE_STATE:-/var/lib/exe-image-forge/grants.json}"
+INSTALL_DIR="${FORGE_INSTALL_DIR:-/opt/exe-image-forge}"
+SERVICE_NAME="${FORGE_SERVICE_NAME:-exe-image-forge-vend.service}"
+REGISTRY_NAME="${FORGE_REGISTRY_NAME:-exe-image-forge-registry}"
+REGISTRY_DATA="${FORGE_REGISTRY_DATA:-/var/lib/exe-image-forge/registry}"
+VM_NAME="${FORGE_VM_NAME:-$(hostname)}"
+VEND_ADDR="${FORGE_ADDR:-127.0.0.1:8000}"
+
+# The Go service uses this when it needs a full CLI image for the web terminal
+# and credential inspection. Exporting it keeps shell and service behavior in
+# sync even when an installation uses a custom image prefix.
+export FORGE_BASE_IMAGE="$BASE"
+export FORGE_COMMAND_PATH="${FORGE_COMMAND_PATH:-/usr/local/bin/exe-image-forge}"
 
 # Image variants. Optional components are the last layers in the Dockerfile, so
 # all variants share the expensive codex/claude blobs and the registry stores
@@ -71,39 +98,39 @@ cmd_build(){
     log "forcing fresh AI CLI versions"
     shift
   fi
-  # `hunyimg build <variant>` rebuilds just one, which is much faster when
+  # `exe-image-forge build <variant>` rebuilds just one, which is much faster when
   # iterating on the Dockerfile.
   [ -n "${1:-}" ] && only="$1"
 
   for v in "${VARIANTS[@]}"; do
     [ -n "$only" ] && [ "$only" != "$v" ] && continue
-    log "building hunydev/base:$v"
+    log "building $BASE_REPO:$v"
     # zstd instead of gzip: ~20% smaller on the wire (497MB -> 399MB for min)
     # and roughly 5x faster to decompress, which is most of the wait after the
     # bytes arrive. force-compression is required, or buildx passes through the
     # gzip layers it already has.
     # shellcheck disable=SC2046
     docker buildx build "${args[@]}" $(variant_args "$v") --build-arg "VARIANT=$v" \
-      --output "type=image,name=hunydev/base:$v,compression=$COMPRESSION,compression-level=$COMPRESSION_LEVEL,force-compression=true" \
+      --output "type=image,name=$BASE_REPO:$v,compression=$COMPRESSION,compression-level=$COMPRESSION_LEVEL,force-compression=true" \
       -f "$ROOT/image/Dockerfile" "$ROOT/image"
   done
 
   # :latest is the default variant, so existing refs and `docker pull` without
   # a tag keep working.
-  docker tag hunydev/base:min "$BASE"
+  docker tag "$BASE_REPO:min" "$BASE"
 
-  log "verifying hunydev/base:min"
-  docker run --rm hunydev/base:min bash -lc \
+  log "verifying $BASE_REPO:min"
+  docker run --rm "$BASE_REPO:min" bash -lc \
     'node -v; npm -v; python3 -V; uv --version; gh --version|head -1; codex --version; claude --version'
   cmd_sizes
-  log "done. next: hunyimg auth <tool>, then hunyimg bake"
+  log "done. next: exe-image-forge auth <tool>, then exe-image-forge bake"
 }
 
 cmd_sizes(){
   log "variant sizes (layers are shared; total disk is far less than the sum)"
   for v in "${VARIANTS[@]}" ; do
     local id sz
-    id=$(docker image inspect "hunydev/base:$v" --format '{{.Size}}' 2>/dev/null) || continue
+    id=$(docker image inspect "$BASE_REPO:$v" --format '{{.Size}}' 2>/dev/null) || continue
     sz=$(numfmt --to=iec <<<"$id")
     printf '   %-12s %s\n' "$v" "$sz"
   done
@@ -112,7 +139,7 @@ cmd_sizes(){
 cmd_shell(){
   ensure_authhome
   log "interactive shell in $BASE with persistent HOME ($AUTHHOME)"
-  log "host network is shared, so OAuth callbacks on localhost work via 'ssh -L <port>:localhost:<port> hunydev-images.exe.xyz'"
+  log "host network is shared; tunnel a callback with 'ssh -L <port>:localhost:<port> ${VM_NAME}.exe.xyz'"
   docker run --rm -it --network host -e HOME=/home/exedev -u 1000:1000 \
     -v "$AUTHHOME":/home/exedev -w /home/exedev "$BASE" bash -l
 }
@@ -122,7 +149,7 @@ cmd_auth(){
   local tool=${1:-}; shift || true
   # Log in against the fullest variant: the lean ones omit gemini, and the
   # credentials land in $AUTHHOME which every variant shares.
-  local img=hunydev/base:go-gemini
+  local img="$BASE_FULL"
   docker image inspect "$img" >/dev/null 2>&1 || img="$BASE"
   local run=(docker run --rm -it --network host -e HOME=/home/exedev -u 1000:1000
              -v "$AUTHHOME":/home/exedev -w /home/exedev "$img")
@@ -145,11 +172,11 @@ and ask you to paste the code back, so no localhost callback is involved.
 If it somehow still sends you to http://localhost:<port>/oauth2callback?... then
 that port is here on the VM, not on your laptop. Copy that dead URL and run:
 
-  hunyimg relay '<paste the whole localhost URL>'
+  exe-image-forge relay '<paste the whole localhost URL>'
 EOF
       "${run[@]}" env NO_BROWSER=true gemini "$@" ;;
     all)    for t in gh codex claude gemini; do cmd_auth "$t"; done ;;
-    *) die "usage: hunyimg auth {gh|codex|claude|gemini|all}" ;;
+    *) die "usage: exe-image-forge auth {gh|codex|claude|gemini|all}" ;;
   esac
 }
 
@@ -161,7 +188,7 @@ cmd_status(){
     if sudo test -s "$AUTHHOME/$f"; then printf '  \033[32m✓\033[0m %s\n' "$f"; else printf '  \033[31m✗\033[0m %s\n' "$f"; fi
   done
   echo
-  local img=hunydev/base:go-gemini
+  local img="$BASE_FULL"
   docker image inspect "$img" >/dev/null 2>&1 || img="$BASE"
   docker run --rm --network host -e HOME=/home/exedev -u 1000:1000 -v "$AUTHHOME":/home/exedev "$img" \
     bash -lc '
@@ -221,33 +248,34 @@ cmd_bake(){
 
   for v in "${VARIANTS[@]}"; do
     [ -n "$only" ] && [ "$only" != "$v" ] && continue
-    docker image inspect "hunydev/base:$v" >/dev/null 2>&1 || {
-      log "hunydev/base:$v not built yet; skipping"; continue; }
-    log "baking hunydev/dev:$v"
+    docker image inspect "$BASE_REPO:$v" >/dev/null 2>&1 || {
+      log "$BASE_REPO:$v not built yet; skipping"; continue; }
+    log "baking $DEV_REPO:$v"
     cat > "$CTX/Dockerfile" <<EOF
-FROM hunydev/base:$v
+FROM $BASE_REPO:$v
 ADD --chown=1000:1000 home.tar /home/exedev/
-LABEL "dev.huny.image"="dev"
-LABEL "dev.huny.variant"="$v"
-LABEL "dev.huny.baked"="$stamp"
+RUN touch /etc/exe-image-forge-credentialed
+LABEL "dev.exe.image-forge.image"="dev"
+LABEL "dev.exe.image-forge.variant"="$v"
+LABEL "dev.exe.image-forge.baked"="$stamp"
 EOF
     # An API-key login has nothing on disk for the CLI to find; it reads the
     # environment instead.
     [ -n "$GEMINI_API_KEY_BAKE" ] && \
       echo "ENV GEMINI_API_KEY=$GEMINI_API_KEY_BAKE" >> "$CTX/Dockerfile"
     docker buildx build --provenance=false --sbom=false \
-      --output "type=image,name=hunydev/dev:$v,compression=$COMPRESSION,compression-level=$COMPRESSION_LEVEL,force-compression=true" \
+      --output "type=image,name=$DEV_REPO:$v,compression=$COMPRESSION,compression-level=$COMPRESSION_LEVEL,force-compression=true" \
       "$CTX"
   done
-  docker tag hunydev/dev:min "$DEV" 2>/dev/null || true
+  docker tag "$DEV_REPO:min" "$DEV" 2>/dev/null || true
 
   # A dev image whose whole purpose is carrying logins, that ships logged out,
   # is worse than no image: it looks fine until someone tries to use it.
   local checked="${only:-min}"
-  if docker image inspect "hunydev/dev:$checked" >/dev/null 2>&1; then
+  if docker image inspect "$DEV_REPO:$checked" >/dev/null 2>&1; then
     local bad=0 out
     out=$(docker run --rm -u 1000:1000 -e HOME=/home/exedev --entrypoint bash \
-      "hunydev/dev:$checked" -c '
+      "$DEV_REPO:$checked" -c '
         gh auth status    >/dev/null 2>&1 && echo gh
         codex login status >/dev/null 2>&1 && echo codex
         claude auth status --json 2>/dev/null | tr -d " " | grep -q "loggedIn\":true" && echo claude
@@ -257,9 +285,9 @@ EOF
     for t in gh codex claude gemini; do
       grep -qx "$t" <<<"$out" || { warn "baked image: $t is NOT logged in"; bad=1; }
     done
-    [ "$bad" = 0 ] && log "verified: all four logins survive into hunydev/dev:$checked"
+    [ "$bad" = 0 ] && log "verified: all four logins survive into $DEV_REPO:$checked"
   fi
-  log "baked. vend hunydev/dev (NOT hunydev/base) to get the credentials"
+  log "baked. vend $DEV_REPO (not $BASE_REPO) to include credentials"
 }
 
 cmd_verify(){
@@ -299,17 +327,17 @@ cmd_import(){
 }
 
 cmd_export_hint(){
-  cat <<'EOF'
+  cat <<EOF
 Run this on the machine where you are already logged in, then pipe it here:
 
-  tar -C "$HOME" -cf - \
+  tar -C "\$HOME" -cf - \
       .config/gh/hosts.yml \
       .codex/auth.json \
       .claude/.credentials.json .claude.json \
       .gemini/oauth_creds.json .gemini/google_accounts.json 2>/dev/null \
-    | ssh hunydev-images.exe.xyz hunyimg import -
+    | ssh ${VM_NAME}.exe.xyz exe-image-forge import -
 
-Omit any file you do not have. Then: hunyimg bake
+Omit any file you do not have. Then: exe-image-forge bake
 EOF
 }
 
@@ -319,25 +347,27 @@ cmd_token(){
   # print a ready-to-paste docker login line.
   local t=${1:-}
   if [ -z "$t" ]; then
-    cat <<'EOF'
+  cat <<EOF
 Create a VM token on your laptop:
 
-  ssh exe.dev ssh-key generate-api-key --vm=hunydev-images --label=registry
+  ssh exe.dev ssh-key generate-api-key --vm=${VM_NAME} --label=registry
 
 Then store it here:
 
-  hunyimg token <TOKEN>       # or: hunyimg token clear
+  exe-image-forge token <TOKEN>       # or: exe-image-forge token clear
 EOF
     return
   fi
   [ "$t" = clear ] && t=""
-  python3 - "$t" <<'PY'
+  sudo python3 - "$CFG" "$t" <<'PY'
 import json, sys
-p='/etc/hunyimg/config.json'
-c=json.load(open(p)); c['vm_token']=sys.argv[1]
-json.dump(c, open(p,'w'), indent=2)
+p=sys.argv[1]
+c=json.load(open(p)); c['vm_token']=sys.argv[2]
+with open(p, 'w') as f:
+    json.dump(c, f, indent=2)
 PY
-  sudo systemctl restart hunyimg-vend
+  sudo chmod 600 "$CFG"
+  sudo systemctl restart "$SERVICE_NAME"
   log "vm token ${t:+stored}${t:-cleared}"
 }
 
@@ -345,7 +375,7 @@ cmd_relay(){
   # Replay a localhost OAuth callback from inside the VM, where the CLI's
   # throwaway listener actually is.
   local u=${1:-}
-  [ -n "$u" ] || die "usage: hunyimg relay '<http://localhost:PORT/oauth2callback?...>'"
+  [ -n "$u" ] || die "usage: exe-image-forge relay '<http://localhost:PORT/oauth2callback?...>'"
   case "$u" in
     http://localhost:*|http://127.0.0.1:*|https://localhost:*|https://127.0.0.1:*) ;;
     *) die "only localhost / 127.0.0.1 callback URLs are allowed" ;;
@@ -359,22 +389,23 @@ cmd_password(){
   read -rsp "new password: " p1; echo
   read -rsp "again: " p2; echo
   [ "$p1" = "$p2" ] || die "mismatch"
-  echo "$p1" | sudo /opt/hunyimg/vend -set-password -config "$CFG"
+  echo "$p1" | sudo "$INSTALL_DIR/vend" -set-password -config "$CFG"
   sudo chown exedev:exedev "$CFG"
-  sudo systemctl restart hunyimg-vend
+  sudo systemctl restart "$SERVICE_NAME"
   log "password updated, service restarted"
 }
 
 cmd_vend_build(){
   log "rebuilding vend service"
   (cd "$ROOT/vend" && go build -o /tmp/vend .)
-  sudo install -m0755 /tmp/vend /opt/hunyimg/vend
-  sudo cp "$ROOT/deploy/hunyimg-vend.service" /etc/systemd/system/
-  sudo systemctl daemon-reload && sudo systemctl restart hunyimg-vend
-  sleep 1; systemctl is-active hunyimg-vend
+  sudo install -d -m0755 "$INSTALL_DIR"
+  sudo install -m0755 /tmp/vend "$INSTALL_DIR/vend"
+  sudo cp "$ROOT/deploy/exe-image-forge-vend.service" /etc/systemd/system/
+  sudo systemctl daemon-reload && sudo systemctl restart "$SERVICE_NAME"
+  sleep 1; systemctl is-active "$SERVICE_NAME"
 }
 
-cmd_grants(){ curl -s localhost:8000/api/info | jq .; }
+cmd_grants(){ curl -s "http://$VEND_ADDR/api/info" | jq .; }
 
 # cmd_refresh rebuilds the base image with current AI CLI releases and re-bakes
 # the credentialed image on top, so freshly vended images are never stale.
@@ -382,9 +413,9 @@ cmd_grants(){ curl -s localhost:8000/api/info | jq .; }
 # safe to run unattended.
 cmd_refresh(){
   local before after
-  before=$(docker run --rm --entrypoint cat hunydev/base:go-gemini /etc/ai-cli-versions.json 2>/dev/null || echo '{}')
+  before=$(docker run --rm --entrypoint cat "$BASE_FULL" /etc/ai-cli-versions.json 2>/dev/null || echo '{}')
   cmd_build --fresh
-  after=$(docker run --rm --entrypoint cat hunydev/base:go-gemini /etc/ai-cli-versions.json 2>/dev/null || echo '{}')
+  after=$(docker run --rm --entrypoint cat "$BASE_FULL" /etc/ai-cli-versions.json 2>/dev/null || echo '{}')
   if [ "$before" = "$after" ]; then
     log "no CLI version changes"
   else
@@ -410,9 +441,9 @@ cmd_versions(){
     return
   fi
   for v in "${VARIANTS[@]}"; do
-    docker image inspect "hunydev/base:$v" >/dev/null 2>&1 || continue
-    log "hunydev/base:$v"
-    docker run --rm --entrypoint cat "hunydev/base:$v" /etc/ai-cli-versions.json 2>/dev/null \
+    docker image inspect "$BASE_REPO:$v" >/dev/null 2>&1 || continue
+    log "$BASE_REPO:$v"
+    docker run --rm --entrypoint cat "$BASE_REPO:$v" /etc/ai-cli-versions.json 2>/dev/null \
       | jq -r 'to_entries[]|"   \(.key): \(.value)"'
   done
 }
@@ -420,18 +451,18 @@ cmd_versions(){
 # cmd_context shows the machine-context block the AI CLIs will read.
 cmd_context(){
   local v="${1:-min}"
-  docker image inspect "hunydev/base:$v" >/dev/null 2>&1 || die "variant '$v' not built"
-  log "AI agent context in hunydev/base:$v (~/.codex/AGENTS.md, .claude/CLAUDE.md, .gemini/GEMINI.md)"
-  docker run --rm --entrypoint cat "hunydev/base:$v" /home/exedev/.codex/AGENTS.md
+  docker image inspect "$BASE_REPO:$v" >/dev/null 2>&1 || die "variant '$v' not built"
+  log "AI agent context in $BASE_REPO:$v (~/.codex/AGENTS.md, .claude/CLAUDE.md, .gemini/GEMINI.md)"
+  docker run --rm --entrypoint cat "$BASE_REPO:$v" /home/exedev/.codex/AGENTS.md
 }
 
 cmd_gc(){
   log "pruning dangling images and registry garbage"
   docker image prune -f
-  docker exec registry sh -c 'registry garbage-collect --delete-untagged /etc/docker/registry/config.yml' >/dev/null 2>&1 \
-    && docker restart registry >/dev/null \
+  docker exec "$REGISTRY_NAME" sh -c 'registry garbage-collect --delete-untagged /etc/docker/registry/config.yml' >/dev/null 2>&1 \
+    && docker restart "$REGISTRY_NAME" >/dev/null \
     || echo "(registry gc failed; skipping)"
-  sudo du -sh /var/lib/hunyimg/registry
+  sudo du -sh "$REGISTRY_DATA"
   df -h / | tail -1
 }
 
@@ -455,26 +486,26 @@ case "${1:-help}" in
   grants) shift; cmd_grants "$@" ;;
   gc) shift; cmd_gc "$@" ;;
   *) cat <<'EOF'
-hunyimg - custom exe.dev image builder + time-limited image vending
+exe-image-forge - custom exe.dev image builder + time-limited image vending
 
-  hunyimg build [--fresh] [variant]  rebuild base images (all 4 variants)
-  hunyimg sizes          show the size of each variant
-  hunyimg refresh        update AI CLIs, rebuild base, re-bake dev (run by timer)
-  hunyimg versions [img] show the tool versions baked into an image
-  hunyimg context [var]  show the machine context the AI CLIs will read
-  hunyimg auth <tool>    log in inside the image: gh | codex | claude | gemini | all
-  hunyimg relay <url>    replay a gemini localhost OAuth callback from the VM
-  hunyimg import [file]  import credentials from a tar (stdin by default)
-  hunyimg export-hint    print the command to run on your logged-in machine
-  hunyimg shell          interactive shell in the image with the persistent auth HOME
-  hunyimg status         show which credentials are present
-  hunyimg bake [variant] build hunydev/dev:<variant> = base + baked credentials
-  hunyimg verify [img]   sanity-check an image (tools + auth)
-  hunyimg password       change the web password
-  hunyimg token [tok]    store an exe.dev VM token for laptop 'docker pull'
-  hunyimg vend-build     rebuild/restart the vending service
-  hunyimg grants         list active grants
-  hunyimg gc             prune docker/registry garbage
+  exe-image-forge build [--fresh] [variant]  rebuild base images (all 4 variants)
+  exe-image-forge sizes          show the size of each variant
+  exe-image-forge refresh        update AI CLIs, rebuild base, re-bake dev (run by timer)
+  exe-image-forge versions [img] show the tool versions baked into an image
+  exe-image-forge context [var]  show the machine context the AI CLIs will read
+  exe-image-forge auth <tool>    log in inside the image: gh | codex | claude | gemini | all
+  exe-image-forge relay <url>    replay a gemini localhost OAuth callback from the VM
+  exe-image-forge import [file]  import credentials from a tar (stdin by default)
+  exe-image-forge export-hint    print the command to run on your logged-in machine
+  exe-image-forge shell          interactive shell in the image with the persistent auth HOME
+  exe-image-forge status         show which credentials are present
+  exe-image-forge bake [variant] build <image-prefix>/dev:<variant> with credentials
+  exe-image-forge verify [img]   sanity-check an image (tools + auth)
+  exe-image-forge password       change the web password
+  exe-image-forge token [tok]    store an exe.dev VM token for laptop 'docker pull'
+  exe-image-forge vend-build     rebuild/restart the vending service
+  exe-image-forge grants         list active grants
+  exe-image-forge gc             prune docker/registry garbage
 EOF
   ;;
 esac

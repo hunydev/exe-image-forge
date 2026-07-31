@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily hunydev registry garbage collection
+Description=Daily exe-image-forge registry garbage collection
 
 [Timer]
 OnCalendar=daily

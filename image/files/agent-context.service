@@ -1,6 +1,6 @@
 [Unit]
 Description=Refresh AI agent machine context files
-Documentation=https://github.com/hunydev
+Documentation=https://github.com/hunydev/exe-image-forge
 After=local-fs.target
 # Runs on every boot, not just the first: the facts it records (kernel, vCPU
 # count, disk size, tool versions) belong to the VM this image was booted on,

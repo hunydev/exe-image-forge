@@ -1,6 +1,6 @@
 [Unit]
 Description=Update AI agent CLIs
-Documentation=https://github.com/hunydev
+Documentation=https://github.com/hunydev/exe-image-forge
 After=network-online.target
 Wants=network-online.target
 

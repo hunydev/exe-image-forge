@@ -1,15 +1,15 @@
-module hunyimg/vend
+module github.com/hunydev/exe-image-forge/vend
 
 go 1.26
 
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
+	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/go-webauthn/webauthn v0.17.4
 )
 
 require (
-	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-webauthn/x v0.2.6 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect

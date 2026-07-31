@@ -18,8 +18,8 @@ import (
 )
 
 // Passkey is a stored credential. Credentials are scoped to the RP ID they were
-// created under: a passkey minted on hunydev-images.exe.xyz is unusable on
-// images.huny.dev and vice versa, so we keep the RP ID and filter by it.
+// created under: a passkey minted on image-forge.exe.xyz is unusable on
+// images.example.com and vice versa, so we keep the RP ID and filter by it.
 type Passkey struct {
 	Label      string              `json:"label"`
 	RPID       string              `json:"rpid"`
@@ -131,7 +131,7 @@ type adminUser struct {
 
 func (u *adminUser) WebAuthnID() []byte          { return u.handle }
 func (u *adminUser) WebAuthnName() string        { return "admin" }
-func (u *adminUser) WebAuthnDisplayName() string { return "huny images admin" }
+func (u *adminUser) WebAuthnDisplayName() string { return "Exe Image Forge admin" }
 func (u *adminUser) WebAuthnCredentials() []webauthn.Credential {
 	out := make([]webauthn.Credential, 0, len(u.keys))
 	for _, k := range u.keys {
@@ -142,7 +142,7 @@ func (u *adminUser) WebAuthnCredentials() []webauthn.Credential {
 
 // rpFor derives the WebAuthn relying party from the request host. The service is
 // reachable under more than one hostname (the exe.xyz name and, once DNS is set
-// up, images.huny.dev), and a passkey is permanently bound to the RP ID it was
+// up, images.example.com), and a passkey is permanently bound to the RP ID it was
 // created with, so this must follow the host the user actually visited.
 func (a *admin) rpFor(r *http.Request) (*webauthn.WebAuthn, string, error) {
 	host := r.Header.Get("X-Forwarded-Host")
@@ -177,7 +177,7 @@ func (a *admin) rpFor(r *http.Request) (*webauthn.WebAuthn, string, error) {
 
 	w, err := webauthn.New(&webauthn.Config{
 		RPID:          hostname,
-		RPDisplayName: "huny images",
+		RPDisplayName: "Exe Image Forge",
 		RPOrigins:     []string{origin},
 	})
 	if err != nil {

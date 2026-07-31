@@ -22,7 +22,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
-const sessionCookie = "hunyimg_admin"
+const sessionCookie = "exe_image_forge_admin"
 
 type session struct {
 	expires time.Time
@@ -191,7 +191,11 @@ func (a *admin) handleBake(w http.ResponseWriter, r *http.Request) {
 	a.bakeMu.Unlock()
 
 	go func() {
-		cmd := exec.Command("/usr/local/bin/hunyimg", "bake")
+		command := os.Getenv("FORGE_COMMAND_PATH")
+		if command == "" {
+			command = "/usr/local/bin/exe-image-forge"
+		}
+		cmd := exec.Command(command, "bake")
 		cmd.Env = append(os.Environ(), "HOME=/home/exedev")
 		out, err := cmd.CombinedOutput()
 		a.bakeMu.Lock()
@@ -252,7 +256,6 @@ func (a *admin) handleTerm(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns:     []string{"*"},
 		CompressionMode:    websocket.CompressionDisabled,
 		InsecureSkipVerify: false,
 	})
@@ -270,7 +273,7 @@ func (a *admin) handleTerm(w http.ResponseWriter, r *http.Request) {
 		rows = v
 	}
 
-	name := "hunyimg-term-" + randHex(4)
+	name := "image-forge-term-" + randHex(4)
 	args := []string{
 		"run", "--rm", "-i", "-t", "--name", name,
 		"--network", "host", "--pull", "never",
@@ -403,7 +406,8 @@ func (a *admin) handleRelay(w http.ResponseWriter, r *http.Request) {
 // variant: this shell exists to log the CLIs in, and the lean variants omit
 // some of them, so using the default would make `gemini` a command-not-found.
 func (s *server) termImage() string {
-	for _, img := range []string{"hunydev/base:go-gemini", "hunydev/base:latest"} {
+	base := imageRepo(s.baseImage())
+	for _, img := range []string{base + ":go-gemini", s.baseImage()} {
 		if err := exec.Command("docker", "image", "inspect", img).Run(); err == nil {
 			return img
 		}

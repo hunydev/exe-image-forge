@@ -1,5 +1,5 @@
 [Unit]
-Description=Weekly refresh of hunydev images
+Description=Weekly refresh of exe-image-forge images
 
 [Timer]
 # Weekly rather than daily: a rebuild pushes new layers and burns disk, and the

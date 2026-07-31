@@ -54,7 +54,7 @@ func TestAllMissing(t *testing.T) {
 
 func TestGhLoggedIn(t *testing.T) {
 	home := t.TempDir()
-	write(t, home, ".config/gh/hosts.yml", "github.com:\n    user: hunydev\n    oauth_token: gho_abc123\n    git_protocol: https\n")
+	write(t, home, ".config/gh/hosts.yml", "github.com:\n    user: exe-image-forge\n    oauth_token: gho_abc123\n    git_protocol: https\n")
 	c := find(inspectCreds(home), "gh")
 	if c.State != "ok" {
 		t.Errorf("state = %q, want ok", c.State)
@@ -191,7 +191,7 @@ func TestRelayRejectsNonLoopback(t *testing.T) {
 		{"metadata service", "http://169.254.169.254/latest/meta-data/", 400},
 		{"private range", "http://10.0.0.5:8000/v2/", 400},
 		{"registry via name", "http://registry:5000/v2/_catalog", 400},
-		{"file scheme", "file:///etc/hunyimg/config.json", 400},
+		{"file scheme", "file:///etc/exe-image-forge/config.json", 400},
 		{"no port", "http://localhost/oauth2callback", 400},
 		{"privileged port", "http://127.0.0.1:22/", 400},
 		{"loopback ok but nothing listening", "http://127.0.0.1:59999/oauth2callback?code=x", 502},
@@ -297,9 +297,36 @@ func TestTerminalUsesTheFullestVariant(t *testing.T) {
 	if !strings.Contains(src, "termImage()") {
 		t.Fatal("terminal does not select its image explicitly")
 	}
-	if !strings.Contains(src, `"hunydev/base:go-gemini"`) {
+	if !strings.Contains(src, `base + ":go-gemini"`) ||
+		!strings.Contains(src, "s.baseImage()") {
 		t.Error("terminal image does not prefer the variant containing every " +
 			"CLI; `gemini` would be command-not-found in the login shell")
+	}
+}
+
+func TestImageRepoAndConfiguredBaseImage(t *testing.T) {
+	for ref, want := range map[string]string{
+		"team/base:latest":                   "team/base",
+		"localhost:5000/team/base:go-gemini": "localhost:5000/team/base",
+		"team/base":                          "team/base",
+	} {
+		if got := imageRepo(ref); got != want {
+			t.Errorf("imageRepo(%q) = %q, want %q", ref, got, want)
+		}
+	}
+
+	t.Setenv("FORGE_BASE_IMAGE", "")
+	s := &server{cfg: Config{
+		SourceImage: map[string]string{"acme/base": "acme/base:latest"},
+		DevImage:    "acme/dev:latest",
+	}}
+	if got := s.baseImage(); got != "acme/base:latest" {
+		t.Fatalf("baseImage() = %q, want custom prefix", got)
+	}
+
+	t.Setenv("FORGE_BASE_IMAGE", "registry.example:5000/custom/base:latest")
+	if got := s.baseImage(); got != "registry.example:5000/custom/base:latest" {
+		t.Fatalf("baseImage() ignored forge.env value: %q", got)
 	}
 }
 
@@ -386,7 +413,7 @@ func TestVariantFor(t *testing.T) {
 	// The smallest image must be what you get when you ask for nothing, since
 	// an empty JSON body decodes to all-false.
 	var req grantReq
-	if err := json.Unmarshal([]byte(`{"repo":"hunydev/dev"}`), &req); err != nil {
+	if err := json.Unmarshal([]byte(`{"repo":"exe-image-forge/dev"}`), &req); err != nil {
 		t.Fatal(err)
 	}
 	if v := variantFor(req.WithGo, req.WithGemini); v != "min" {
@@ -395,13 +422,13 @@ func TestVariantFor(t *testing.T) {
 
 	// Every variant the server can produce must be one the build script knows
 	// how to build, and vice versa.
-	script, err := os.ReadFile("../hunyimg")
+	script, err := os.ReadFile("../exe-image-forge")
 	if err != nil {
-		t.Skipf("hunyimg not readable: %v", err)
+		t.Skipf("exe-image-forge not readable: %v", err)
 	}
 	for _, name := range variantNames {
 		if !strings.Contains(string(script), name+")") {
-			t.Errorf("variant %q has no case in hunyimg's variant_args", name)
+			t.Errorf("variant %q has no case in exe-image-forge's variant_args", name)
 		}
 	}
 	for _, combo := range [][2]bool{{false, false}, {false, true}, {true, false}, {true, true}} {
@@ -484,8 +511,8 @@ func TestAgentContextTargetsTheDocumentedGlobalPaths(t *testing.T) {
 	}
 
 	// Content must be delimited so a user's own notes survive regeneration.
-	if !strings.Contains(src, "BEGIN hunydev machine context") ||
-		!strings.Contains(src, "END hunydev machine context") {
+	if !strings.Contains(src, "BEGIN exe-image-forge machine context") ||
+		!strings.Contains(src, "END exe-image-forge machine context") {
 		t.Error("generated block is not delimited by markers; regeneration would " +
 			"destroy anything the user added to these files")
 	}
@@ -527,7 +554,7 @@ func TestAgentContextRegeneratesAtBoot(t *testing.T) {
 		t.Error("agent-context.service is never enabled in the image")
 	}
 	// The variant name must be recorded for the context to report it.
-	if !strings.Contains(string(df), "/etc/hunydev-variant") {
+	if !strings.Contains(string(df), "/etc/exe-image-forge-variant") {
 		t.Error("variant is not recorded, so the context cannot name it")
 	}
 }
@@ -648,7 +675,7 @@ func TestGeminiLoginAvoidsLocalhostCallback(t *testing.T) {
 // chats/*.jsonl, codex state_*.sqlite, .bash_history), and a denylist ships
 // whatever nobody thought to exclude.
 func TestBakeCopiesAnAllowlistNotTheWholeHome(t *testing.T) {
-	b, err := os.ReadFile("../hunyimg")
+	b, err := os.ReadFile("../exe-image-forge")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -694,7 +721,7 @@ func TestBakeCopiesAnAllowlistNotTheWholeHome(t *testing.T) {
 
 func credAllowlist(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile("../hunyimg")
+	b, err := os.ReadFile("../exe-image-forge")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,7 +750,7 @@ func TestBakeAllowlistExcludesAgentContext(t *testing.T) {
 // machine that logged in; otherwise every image ships a gemini that is not
 // logged in while the admin page cheerfully reports "ok".
 func TestBakeConvertsGeminiCredentialsToAPortableForm(t *testing.T) {
-	b, err := os.ReadFile("../hunyimg")
+	b, err := os.ReadFile("../exe-image-forge")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -731,6 +758,10 @@ func TestBakeConvertsGeminiCredentialsToAPortableForm(t *testing.T) {
 	if !strings.Contains(src, "gemini-export-creds.js") {
 		t.Fatal("bake does not convert gemini credentials; the encrypted file " +
 			"is keyed to this hostname and is useless in the shipped image")
+	}
+	if !strings.Contains(src, "/etc/exe-image-forge-credentialed") {
+		t.Error("baked image has no credentialed marker, so generated agent " +
+			"context cannot distinguish it from the logged-out base image")
 	}
 	// The conversion has to happen on this host, so the hostname used for the
 	// key derivation matches the one that performed the login.
@@ -752,13 +783,13 @@ func TestBakeConvertsGeminiCredentialsToAPortableForm(t *testing.T) {
 // meant the obvious choice produced a VM where every CLI was logged out --
 // the exact problem this project exists to solve.
 func TestVendingPrefersAndLabelsTheCredentialedImage(t *testing.T) {
-	s := &server{cfg: Config{Repos: []string{"hunydev/dev", "hunydev/base"}}}
+	s := &server{cfg: Config{Repos: []string{"exe-image-forge/dev", "exe-image-forge/base"}}}
 	info := s.repoInfo()
 	if len(info) != 2 {
 		t.Fatalf("got %d repos", len(info))
 	}
 	// First entry is the default selection in the UI.
-	if info[0]["name"] != "hunydev/dev" || info[0]["baked"] != true {
+	if info[0]["name"] != "exe-image-forge/dev" || info[0]["baked"] != true {
 		t.Errorf("default repo is %v (baked=%v); the credentialed image must "+
 			"come first", info[0]["name"], info[0]["baked"])
 	}
@@ -773,7 +804,7 @@ func TestVendingPrefersAndLabelsTheCredentialedImage(t *testing.T) {
 // bake must confirm the logins actually made it into the image. A dev image
 // that ships logged out looks fine until someone tries to use it.
 func TestBakeVerifiesTheLoginsSurvive(t *testing.T) {
-	b, err := os.ReadFile("../hunyimg")
+	b, err := os.ReadFile("../exe-image-forge")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -827,14 +858,14 @@ func TestPublishedLayersUseZstd(t *testing.T) {
 // The image build must agree with publish, or the parent layers are gzip and
 // every vended tag pays to recompress them.
 func TestImageBuildUsesZstd(t *testing.T) {
-	b, err := os.ReadFile("../hunyimg")
+	b, err := os.ReadFile("../exe-image-forge")
 	if err != nil {
 		t.Fatal(err)
 	}
 	src := string(b)
 	for _, want := range []string{"COMPRESSION=${COMPRESSION:-zstd}", "force-compression=true"} {
 		if !strings.Contains(src, want) {
-			t.Errorf("hunyimg build is missing %q", want)
+			t.Errorf("exe-image-forge build is missing %q", want)
 		}
 	}
 }

@@ -1,5 +1,5 @@
 [Unit]
-Description=hunydev image registry garbage collection
+Description=exe-image-forge image registry garbage collection
 After=docker.service
 
 [Service]
@@ -7,7 +7,7 @@ Type=oneshot
 User=exedev
 Group=exedev
 SupplementaryGroups=docker
-ExecStart=/usr/local/bin/hunyimg gc
+ExecStart=/usr/local/bin/exe-image-forge gc
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=hunyimg-gc
+SyslogIdentifier=exe-image-forge-gc

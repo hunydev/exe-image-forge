@@ -10,8 +10,8 @@
 # confidently wrong.
 set -uo pipefail
 
-BEGIN='<!-- BEGIN hunydev machine context (generated; edits inside are overwritten) -->'
-END='<!-- END hunydev machine context -->'
+BEGIN='<!-- BEGIN exe-image-forge machine context (generated; edits inside are overwritten) -->'
+END='<!-- END exe-image-forge machine context -->'
 
 have(){ command -v "$1" >/dev/null 2>&1; }
 ver(){ have "$1" && "$@" 2>/dev/null | head -1 || return 1; }
@@ -51,7 +51,9 @@ have go     || missing+="\`go\` (Go toolchain), "
 have gemini || missing+="\`gemini\` (Gemini CLI), "
 missing=${missing%, }
 
-variant=$(cat /etc/hunydev-variant 2>/dev/null || echo unknown)
+variant=$(cat /etc/exe-image-forge-variant 2>/dev/null || echo unknown)
+credentialed=0
+[ -f /etc/exe-image-forge-credentialed ] && credentialed=1
 
 # --- render --------------------------------------------------------------
 render(){
@@ -59,7 +61,7 @@ cat <<MD
 $BEGIN
 ## This machine
 
-You are running on an **exe.dev VM** built from the \`hunydev\` custom image
+You are running on an **exe.dev VM** built from the \`exe-image-forge\` custom image
 (variant \`$variant\`). This section is generated at boot; it describes the
 machine you are actually on, so prefer it over assumptions.
 
@@ -69,7 +71,7 @@ machine you are actually on, so prefer it over assumptions.
 
 ### Installed toolchains
 $tools
-### AI agent CLIs (all pre-authenticated in this image)
+### AI agent CLIs
 $agents
 MD
 
@@ -95,8 +97,21 @@ work from a browser on another machine.** Prefer the headless variants:
 \`codex login --device-auth\`, \`claude setup-token\`, \`gh auth login\` (device code).
 
 ### Conventions
-- Credentials for the AI CLIs and \`gh\` are already baked in — do not re-authenticate
+MD
+
+if [ "$credentialed" = 1 ]; then
+cat <<MD
+- Credentials for the AI CLIs and \`gh\` are baked in — do not re-authenticate
   unless a command reports an expired token.
+MD
+else
+cat <<MD
+- This is a base image and intentionally contains no baked credentials. Check
+  authentication before relying on a provider, or request a credentialed image.
+MD
+fi
+
+cat <<MD
 - The AI CLIs update themselves daily via \`ai-cli-update.timer\`; do not upgrade them by hand.
 - Prefer \`uv\`/\`uvx\` over \`pip install\` for Python tools.
 - \`rg\` (ripgrep), \`jq\`, \`sqlite3\`, \`tree\` are available.

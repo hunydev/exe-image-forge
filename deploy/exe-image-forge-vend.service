@@ -1,0 +1,27 @@
+[Unit]
+Description=exe-image-forge image vending service
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=exedev
+Group=exedev
+SupplementaryGroups=docker
+Environment=HOME=/home/exedev
+Environment=FORGE_ADDR=127.0.0.1:8000
+Environment=FORGE_CONFIG=/etc/exe-image-forge/config.json
+Environment=FORGE_STATE=/var/lib/exe-image-forge/grants.json
+Environment=FORGE_BASE_IMAGE=exe-image-forge/base:latest
+Environment=FORGE_COMMAND_PATH=/usr/local/bin/exe-image-forge
+EnvironmentFile=-/etc/exe-image-forge/forge.env
+ExecStart=/opt/exe-image-forge/vend -addr ${FORGE_ADDR} -config ${FORGE_CONFIG} -state ${FORGE_STATE}
+Restart=always
+RestartSec=2
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=exe-image-forge-vend
+
+[Install]
+WantedBy=multi-user.target

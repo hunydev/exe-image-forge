@@ -287,10 +287,10 @@ func (s *server) toolVersions() map[string]string {
 	defer cancel()
 	// Read from the fullest variant so every optional tool reports a version;
 	// the leaner variants share these binaries, they just omit some.
-	base, _, _ := strings.Cut(img, ":")
+	base := imageRepo(img)
 	var out []byte
 	var err error
-	for _, cand := range []string{base + ":go-gemini", img, "hunydev/base:go-gemini"} {
+	for _, cand := range []string{base + ":go-gemini", img, imageRepo(s.baseImage()) + ":go-gemini"} {
 		out, err = exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "cat",
 			cand, "/etc/ai-cli-versions.json").Output()
 		if err == nil {
@@ -349,10 +349,10 @@ func (s *server) variants() map[string]variantInfo {
 
 	// Price the variants using whichever repo the user will actually pull.
 	// The baked dev image is the interesting one when it exists.
-	repo := "hunydev/base"
+	repo := imageRepo(s.baseImage())
 	if s.cfg.DevImage != "" {
 		if _, err := exec.Command("docker", "image", "inspect", s.cfg.DevImage).Output(); err == nil {
-			repo = "hunydev/dev"
+			repo = imageRepo(s.cfg.DevImage)
 		}
 	}
 
@@ -392,7 +392,7 @@ func (s *server) agentContext(variant string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "cat",
-		"hunydev/base:"+variant, "/home/exedev/.codex/AGENTS.md").Output()
+		imageRepo(s.baseImage())+":"+variant, "/home/exedev/.codex/AGENTS.md").Output()
 	if err != nil {
 		return ""
 	}
@@ -433,9 +433,13 @@ func claudeAuthStatus(home string) (string, bool) {
 }
 
 func claudeAuthStatusUncached(home string) (string, bool) {
-	img := "hunydev/base:go-gemini"
+	base := os.Getenv("FORGE_BASE_IMAGE")
+	if base == "" {
+		base = "exe-image-forge/base:latest"
+	}
+	img := imageRepo(base) + ":go-gemini"
 	if err := exec.Command("docker", "image", "inspect", img).Run(); err != nil {
-		img = "hunydev/base:latest"
+		img = base
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
