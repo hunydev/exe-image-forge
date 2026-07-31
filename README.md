@@ -31,7 +31,17 @@ product.
 - A read-only, token-scoped registry proxy with expiring grants
 - Disk-pressure guards, orphan reconciliation, and safe registry garbage
   collection
+- A loopback-only fixture server and desktop/mobile browser tests
 - Daily CLI updates inside running images and a weekly forge refresh timer
+
+## Screenshots
+
+| Image grants | Administration |
+| --- | --- |
+| [![Image grant page](docs/images/grant-page.png)](docs/images/grant-page.png) | [![Administration overview](docs/images/admin-overview.png)](docs/images/admin-overview.png) |
+
+These reference screens use deterministic demo data and contain no provider
+credentials.
 
 ## Requirements
 
@@ -280,16 +290,29 @@ control plane and the only externally reachable registry path.
 
 ```bash
 make check
+make dev
+make e2e
 ```
 
 This runs Go tests with the race detector, `go vet`, Go formatting checks, and
-Bash syntax checks. The test suite covers authentication and credential
+Bash syntax checks. `make dev` starts a loopback-only fixture server at
+`http://127.0.0.1:18080` with password `forge-demo`; it does not read real
+credentials or run Docker image operations. `make e2e` exercises desktop and
+mobile Chromium, using Docker automatically when local Node.js is unavailable.
+
+The test suite covers authentication and credential
 filtering, grants and registry cleanup, passkeys, security headers, session
 gating, and command integration. GitHub Actions runs the same validation on
 pushes and pull requests.
 
 Contributions are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md). Security
 issues should follow [`SECURITY.md`](SECURITY.md).
+
+Contributor references:
+
+- [HTTP and WebSocket API](docs/api.md)
+- [Web UI guide](docs/ui.md)
+- [Operations guide](docs/operations.md)
 
 ## License
 

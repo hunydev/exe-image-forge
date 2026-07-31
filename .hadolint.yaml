@@ -1,0 +1,7 @@
+failure-threshold: warning
+ignored:
+  # Ubuntu package versions deliberately follow the selected base image and
+  # are refreshed by the forge instead of being frozen to one snapshot.
+  - DL3008
+  # The image boots systemd as PID 1; services drop privileges individually.
+  - DL3002

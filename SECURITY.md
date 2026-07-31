@@ -18,6 +18,19 @@ excluded by default.
 The web password is PBKDF2-HMAC-SHA256 hashed with a random salt. The plaintext
 password should never be stored in `forge.env`, `config.json`, or the repository.
 
+## Automated checks
+
+Pushes, pull requests, and a weekly schedule run:
+
+- CodeQL analysis for Go
+- `govulncheck` against reachable Go symbols
+- full-history Gitleaks scanning with redacted output
+- ShellCheck and Hadolint
+- dependency review for pull requests
+
+GitHub secret scanning and push protection should remain enabled. Dependabot
+tracks Go, npm, Docker, and GitHub Actions dependencies.
+
 ## Reporting a vulnerability
 
 Please use GitHub's private vulnerability reporting for this repository. Do not

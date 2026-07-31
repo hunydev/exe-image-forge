@@ -66,6 +66,7 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
 .metric .value{font-size:22px;font-weight:700;margin-top:4px}
 .metric .label{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
 .session{font-size:12px;color:var(--ok);white-space:nowrap}
+.mode{display:inline-block;border:1px solid var(--warn);border-radius:999px;color:var(--warn);font-size:11px;font-weight:700;padding:2px 8px;text-transform:uppercase;letter-spacing:.05em}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media(max-width:760px){.wrap{padding:16px}.metrics,.grid2{grid-template-columns:1fr}.session{width:100%;order:5}.card{padding:15px}#termbox{height:380px}}
 </style>
@@ -90,6 +91,7 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
 <div id="app" class="hide">
   <header>
     <h1>Exe Image Forge · Admin</h1>
+    <span id="demobadge" class="mode hide">Demo mode</span>
     <span class="sp"></span>
     <span class="session" id="sessionstatus">Signed in</span>
     <a href="/">← Image grants</a>
@@ -301,6 +303,7 @@ async function refreshData(){
   if(!authed)return;
   const [data,info]=await Promise.all([api('/api/creds'),api('/api/info')]);
   if(!data.authed){setAuth(false);return}
+  $('#demobadge').classList.toggle('hide',!info.demo);
 
   const baked=data.baked?new Date(data.baked):null;
   $('#bakedat').textContent=baked?baked.toLocaleString():'Never';

@@ -74,6 +74,7 @@ type server struct {
 	cfg              Config
 	cfgPath          string
 	statePath        string
+	demo             bool
 	registry         *httputil.ReverseProxy
 	registryURL      *url.URL
 	registryLockPath string
@@ -363,7 +364,7 @@ func (s *server) gcLocked() {
 					shared = true
 				}
 			}
-			if !shared {
+			if !shared && !s.demo {
 				go s.deleteTag(context.Background(), repo, tag)
 			}
 		}
@@ -958,6 +959,10 @@ func (s *server) handleV2(w http.ResponseWriter, r *http.Request) {
 		deny(404)
 		return
 	}
+	if s.demo {
+		http.Error(w, "demo mode does not serve registry content", http.StatusNotImplemented)
+		return
+	}
 	// Rewrite to the shared backing repo so blobs are stored once.
 	r2 := r.Clone(r.Context())
 	r2.URL.Path = "/v2/" + tail
@@ -967,6 +972,9 @@ func (s *server) handleV2(w http.ResponseWriter, r *http.Request) {
 
 // bakedAt reports when the baked dev image was last built, for the UI.
 func (s *server) bakedAt() string {
+	if s.demo {
+		return time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+	}
 	img := s.cfg.DevImage
 	if img == "" {
 		return ""
@@ -1049,16 +1057,37 @@ func main() {
 	statePath := flag.String("state", "/var/lib/exe-image-forge/grants.json", "grant state file")
 	registryURL := flag.String("registry", "http://127.0.0.1:5000", "backing registry")
 	setPassword := flag.Bool("set-password", false, "read a new master password from stdin and exit")
+	demo := flag.Bool("demo", false, "run a loopback-only server with deterministic fixture data")
 	flag.Parse()
 
-	b, err := os.ReadFile(*cfgPath)
 	var cfg Config
-	if err == nil {
-		if err := json.Unmarshal(b, &cfg); err != nil {
+	var demoDir string
+	if *demo {
+		if *setPassword {
+			log.Fatal("-demo and -set-password cannot be used together")
+		}
+		if !loopbackListenAddress(*addr) {
+			log.Fatal("demo mode may listen only on an explicit loopback address")
+		}
+		var err error
+		demoDir, err = os.MkdirTemp("", "exe-image-forge-demo-")
+		if err != nil {
+			log.Fatalf("demo state: %v", err)
+		}
+		defer os.RemoveAll(demoDir)
+		cfg = demoConfig(demoDir)
+		cfg.PullHost = *addr
+		*statePath = filepath.Join(demoDir, "grants.json")
+		log.Printf("DEMO MODE: open http://%s and sign in with password %q", *addr, demoPassword)
+	} else {
+		b, err := os.ReadFile(*cfgPath)
+		if err == nil {
+			if err := json.Unmarshal(b, &cfg); err != nil {
+				log.Fatalf("config: %v", err)
+			}
+		} else if !*setPassword {
 			log.Fatalf("config: %v", err)
 		}
-	} else if !*setPassword {
-		log.Fatalf("config: %v", err)
 	}
 	if *setPassword {
 		var pw string
@@ -1111,11 +1140,17 @@ func main() {
 		cfg:              cfg,
 		cfgPath:          *cfgPath,
 		statePath:        *statePath,
+		demo:             *demo,
 		registry:         httputil.NewSingleHostReverseProxy(ru),
 		registryURL:      ru,
 		registryLockPath: os.Getenv("FORGE_REGISTRY_LOCK"),
 		orphanGrace:      defaultOrphanGrace,
 		byToken:          map[string]*Grant{},
+	}
+	if s.demo {
+		s.publishImage = func(context.Context, string, string, string) error { return nil }
+		s.removeLocalImage = func(string) error { return nil }
+		s.diskCheck = func() error { return nil }
 	}
 	if s.registryLockPath == "" {
 		s.registryLockPath = filepath.Join(filepath.Dir(*statePath), "registry.lock")
@@ -1147,24 +1182,26 @@ func main() {
 			s.grantsMu.Unlock()
 		}
 	}()
-	go func() {
-		// A grace period protects a push that completed immediately before a
-		// crash. Reconcile once on startup and periodically thereafter.
-		if n, err := s.reconcileOrphans(context.Background(), false); err != nil {
-			log.Printf("orphan reconciliation: %v", err)
-		} else if n > 0 {
-			log.Printf("orphan reconciliation removed %d tag(s)", n)
-		}
-		ticker := time.NewTicker(6 * time.Hour)
-		defer ticker.Stop()
-		for range ticker.C {
+	if !s.demo {
+		go func() {
+			// A grace period protects a push that completed immediately before
+			// a crash. Reconcile once on startup and periodically thereafter.
 			if n, err := s.reconcileOrphans(context.Background(), false); err != nil {
 				log.Printf("orphan reconciliation: %v", err)
 			} else if n > 0 {
 				log.Printf("orphan reconciliation removed %d tag(s)", n)
 			}
-		}
-	}()
+			ticker := time.NewTicker(6 * time.Hour)
+			defer ticker.Stop()
+			for range ticker.C {
+				if n, err := s.reconcileOrphans(context.Background(), false); err != nil {
+					log.Printf("orphan reconciliation: %v", err)
+				} else if n > 0 {
+					log.Printf("orphan reconciliation removed %d tag(s)", n)
+				}
+			}
+		}()
+	}
 
 	mux := http.NewServeMux()
 	a := &admin{
@@ -1243,7 +1280,7 @@ func main() {
 		out := map[string]any{
 			"repos": s.repoInfo(), "pull_host": s.cfg.PullHost,
 			"ttl_minutes": s.cfg.TTLMinutes, "active_count": len(s.byToken),
-			"variants": vars, "variant_names": variantNames,
+			"variants": vars, "variant_names": variantNames, "demo": s.demo,
 		}
 		// Only a local caller (the exe-image-forge CLI) sees grant detail; the
 		// proxy always sets X-Forwarded-For for remote requests.
@@ -1255,6 +1292,8 @@ func main() {
 			}
 			out["active"] = acts
 		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(out)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

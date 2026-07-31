@@ -1,0 +1,13 @@
+{
+  "name": "exe-image-forge-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Browser tests for the Exe Image Forge fixture-backed demo server",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "screenshots": "playwright test --project=chromium --grep @screenshots"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

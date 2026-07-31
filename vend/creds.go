@@ -271,6 +271,9 @@ func summarize(creds []Cred) []string {
 // update-ai-clis script. Reading a file beats running four CLIs, each of which
 // can take seconds to start.
 func (s *server) toolVersions() map[string]string {
+	if s.demo {
+		return demoToolVersions()
+	}
 	img := s.cfg.DevImage
 	if img == "" {
 		return nil
@@ -343,6 +346,9 @@ func humanSize(b int64) string {
 // blobs in the registry manifest and is therefore what a `docker pull`
 // actually transfers. The on-disk size after unpacking is several times larger.
 func (s *server) variants() map[string]variantInfo {
+	if s.demo {
+		return demoVariants()
+	}
 	s.verMu.Lock()
 	if s.varCache != nil && time.Since(s.varAt) < 2*time.Minute {
 		v := s.varCache
@@ -392,6 +398,9 @@ func (s *server) agentContext(variant string) string {
 	}
 	if !valid {
 		return ""
+	}
+	if s.demo {
+		return demoAgentContext(variant)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

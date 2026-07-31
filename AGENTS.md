@@ -47,10 +47,21 @@ plain HTML, CSS, and JavaScript embedded into the Go service.
 | WebAuthn/passkeys | `vend/webauthn.go` |
 | Credential discovery and allowlisting | `vend/creds.go` |
 | Vend service tests | `vend/*_test.go` |
+| Browser tests | `e2e/forge.spec.js` |
+| Browser test configuration | `playwright.config.js` |
 
 `vend/ui.go` embeds the pages and browser assets with `go:embed`. Editing an
 HTML or JavaScript file therefore requires rebuilding the vending binary before
 the running site changes.
+
+For a fixture-backed preview that never touches Docker or real credentials:
+
+```bash
+make dev
+```
+
+Open `http://127.0.0.1:18080` and sign in with `forge-demo`. Demo mode is
+hard-limited to explicit loopback addresses and is marked in the UI.
 
 ## Web application contract
 
@@ -143,6 +154,8 @@ test for both authorized and unauthorized requests.
 | `forge.env.example` | Public host-configuration template |
 | `config.example.json` | Public vending-configuration template |
 | `docs/operations.md` | Detailed architecture and recovery guide |
+| `docs/api.md` | Browser API request, response, and error contracts |
+| `docs/ui.md` | Visual, responsive, accessibility, and copy conventions |
 
 Keep the README, examples, CLI help, web copy, and operations guide consistent
 when a user-visible command or behavior changes.
@@ -174,6 +187,16 @@ Bash syntax checks. Add focused tests for changed behavior, especially:
 
 Also run `git diff --check` and review the final diff. Do not regenerate or
 modify the vendored xterm distributions for unrelated UI work.
+
+For web changes, also run the real-browser suite:
+
+```bash
+make e2e
+```
+
+It exercises desktop and mobile Chromium against the fixture-backed demo
+server. Run `make screenshots` only for an intentional visual change, then
+inspect `docs/images/` before staging it.
 
 ## Applying web changes to an installed VM
 
@@ -213,8 +236,9 @@ A change is complete when:
 1. The requested source behavior is implemented in English.
 2. Relevant security and credential boundaries remain intact.
 3. Focused tests and `make check` pass.
-4. Documentation is updated when behavior changed.
-5. The installed web service is rebuilt and healthy when live reflection was
+4. `make e2e` passes for web behavior or layout changes.
+5. Documentation is updated when behavior changed.
+6. The installed web service is rebuilt and healthy when live reflection was
    requested.
-6. Only intended files are staged, and the GitHub result is reported when a
+7. Only intended files are staged, and the GitHub result is reported when a
    commit or push was requested.

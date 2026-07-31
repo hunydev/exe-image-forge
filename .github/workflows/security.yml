@@ -1,0 +1,91 @@
+name: Security
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: go
+          build-mode: manual
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: vend/go.mod
+          cache-dependency-path: vend/go.sum
+      - run: cd vend && go build ./...
+      - uses: github/codeql-action/analyze@v4
+
+  vulnerabilities:
+    name: Go vulnerabilities
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: golang/govulncheck-action@v1.1.0
+        with:
+          go-version-file: vend/go.mod
+          cache-dependency-path: vend/go.sum
+          work-dir: vend
+          go-package: ./...
+
+  secrets:
+    name: Secret history
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Scan Git history with Gitleaks
+        run: >-
+          docker run --rm
+          -v "$PWD:/repo"
+          zricethezav/gitleaks:v8.30.1
+          git --redact --no-banner --config /repo/.gitleaks.toml /repo
+
+  lint:
+    name: Shell and Dockerfile
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Check shell scripts
+        run: >-
+          shellcheck
+          exe-image-forge
+          install.sh
+          scripts/run-e2e.sh
+          image/files/update-ai-clis
+          image/files/write-agent-context
+          image/files/write-versions
+          image/files/init-wrapper.sh
+      - uses: hadolint/hadolint-action@v3.4.0
+        with:
+          dockerfile: image/Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: warning
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v5.0.0
+        with:
+          fail-on-severity: high

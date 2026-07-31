@@ -169,7 +169,12 @@ func (a *admin) handleLogout(w http.ResponseWriter, r *http.Request) {
 // handleCreds reports credential state. Available unauthenticated in an
 // aggregate-only form so the main page can warn before sign-in.
 func (a *admin) handleCreds(w http.ResponseWriter, r *http.Request) {
-	creds := inspectCreds(a.srv.cfg.AuthHome)
+	var creds []Cred
+	if a.srv.demo {
+		creds = demoCredentials()
+	} else {
+		creds = inspectCreds(a.srv.cfg.AuthHome)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	if a.authed(r) {
@@ -218,6 +223,23 @@ func (a *admin) handleBake(w http.ResponseWriter, r *http.Request) {
 	a.bakeErr = ""
 	a.bakeMu.Unlock()
 
+	if a.srv.demo {
+		go func() {
+			time.Sleep(250 * time.Millisecond)
+			a.bakeMu.Lock()
+			a.bakeRunning = false
+			a.bakeAt = time.Now()
+			a.bakeLog = []string{
+				"[demo] validated allowlisted credential fixtures",
+				"[demo] simulated 16 credentialed image variants",
+				"[demo] no Docker image was built or pushed",
+			}
+			a.bakeMu.Unlock()
+		}()
+		w.Write([]byte(`{"started":true,"demo":true}`))
+		return
+	}
+
 	go func() {
 		command := os.Getenv("FORGE_COMMAND_PATH")
 		if command == "" {
@@ -265,6 +287,10 @@ func (a *admin) handleBakeStatus(w http.ResponseWriter, r *http.Request) {
 // image, with the persistent auth home mounted. This is how OAuth logins get
 // done from a browser.
 func (a *admin) handleTerm(w http.ResponseWriter, r *http.Request) {
+	if a.srv.demo {
+		a.handleDemoTerm(w, r)
+		return
+	}
 	// One terminal at a time. Concurrent shells would race on the same auth
 	// home, and each holds a container.
 	a.mu.Lock()

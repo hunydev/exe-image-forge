@@ -1,4 +1,4 @@
-.PHONY: check test fmt
+.PHONY: check test fmt dev e2e screenshots
 
 check:
 	cd vend && go test -race ./...
@@ -13,3 +13,12 @@ test:
 
 fmt:
 	gofmt -w vend/*.go
+
+dev:
+	cd vend && go run . -demo -addr 127.0.0.1:18080
+
+e2e:
+	./scripts/run-e2e.sh
+
+screenshots:
+	./scripts/run-e2e.sh --project=chromium --grep @screenshots

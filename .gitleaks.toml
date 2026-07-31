@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Pinned third-party browser distributions"
+paths = [
+  '''^vend/assets/xterm\.js$''',
+]

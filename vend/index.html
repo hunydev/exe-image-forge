@@ -54,12 +54,13 @@ pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12
 .szline{margin-top:10px}
 .szline b{color:var(--fg);font-weight:600}
 .session{font-size:12px;color:var(--ok);white-space:nowrap;padding-top:3px}
+.mode{display:inline-block;border:1px solid var(--warn);border-radius:999px;color:var(--warn);font-size:11px;font-weight:700;padding:2px 8px;text-transform:uppercase;letter-spacing:.05em}
 kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="topbar"><h1>Exe Image Forge</h1><span class="sp"></span><a href="/admin/">Open admin →</a></div>
+  <div class="topbar"><h1>Exe Image Forge</h1><span id="demobadge" class="mode hide">Demo mode</span><span class="sp"></span><a href="/admin/">Open admin →</a></div>
   <p class="sub">Create a short-lived image path for an exe.dev VM or Docker pull.</p>
 
   <div id="notice"></div>
@@ -175,6 +176,7 @@ async function checkSession(){
 
 async function loadInfo(){
   const d=await api('/api/info');
+  $('#demobadge').classList.toggle('hide',!d.demo);
   $('#repo').innerHTML=d.repos.map(r=>`<option value="${r.name}" data-note="${r.note}">${r.label}</option>`).join('');
   const showNote=()=>{const o=$('#repo').selectedOptions[0];$('#reponote').textContent=o?o.dataset.note:''};
   $('#repo').onchange=showNote;showNote();

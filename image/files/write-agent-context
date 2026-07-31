@@ -17,6 +17,7 @@ have(){ command -v "$1" >/dev/null 2>&1; }
 ver(){ have "$1" && "$@" 2>/dev/null | head -1 || return 1; }
 
 # --- collect facts -------------------------------------------------------
+# shellcheck source=/dev/null
 os=$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME")
 kernel=$(uname -r)
 arch=$(uname -m)
