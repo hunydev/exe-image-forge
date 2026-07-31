@@ -34,14 +34,14 @@ jobs:
             --privileged \
             --cgroupns=host \
             --env FORGE_AUTO_BUILD=0 \
-            --publish 127.0.0.1:18000:8000 \
             --volume "$RUNNER_TEMP/forge-docker-daemon.json:/etc/docker/daemon.json:ro" \
             ghcr.io/hunydev/exe-image-forge:latest
 
       - name: Verify first boot and web readiness
         run: |
           for _ in $(seq 1 180); do
-            if curl --fail --silent http://127.0.0.1:18000/healthz >/dev/null; then
+            if docker exec exe-image-forge-smoke \
+              curl --fail --silent http://127.0.0.1:8000/healthz >/dev/null; then
               break
             fi
             if [[ "$(docker inspect -f '{{.State.Running}}' exe-image-forge-smoke)" != true ]]; then
@@ -51,7 +51,10 @@ jobs:
             sleep 1
           done
 
-          curl --fail --silent http://127.0.0.1:18000/healthz | grep -Fx ok
+          docker image inspect ghcr.io/hunydev/exe-image-forge:latest \
+            --format '{{json .Config.ExposedPorts}}' | jq -e 'has("8000/tcp")'
+          docker exec exe-image-forge-smoke \
+            curl --fail --silent http://127.0.0.1:8000/healthz | grep -Fx ok
           docker exec exe-image-forge-smoke \
             systemctl is-active --quiet exe-image-forge-initialize.service
           docker exec exe-image-forge-smoke \
@@ -80,7 +83,8 @@ jobs:
              (.salt | length) == 32 and
              (.hash | length) == 64' \
             /etc/exe-image-forge/config.json >/dev/null
-          curl --fail --silent http://127.0.0.1:18000/api/creds |
+          docker exec exe-image-forge-smoke \
+            curl --fail --silent http://127.0.0.1:8000/api/creds |
             jq -e '.authed == false and (has("terminal_mode") | not)' >/dev/null
 
       - name: Show service logs on failure
