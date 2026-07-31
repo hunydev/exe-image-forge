@@ -297,3 +297,39 @@ bake 는 끝나고 실제로 로그인이 넘어갔는지 확인합니다:
 ```
 
 넘어가지 않았으면 `warn: baked image: <tool> is NOT logged in` 이 뜹니다.
+
+
+## 이미지 크기
+
+레이어는 gzip 이 아니라 **zstd** 로 압축합니다. 같은 내용이 20% 작고, 무엇보다 압축 해제가
+훨씬 빠릅니다 — 바이트가 도착한 뒤 기다리는 시간의 대부분이 이겁니다.
+
+| | gzip | zstd -9 |
+|---|---|---|
+| min 다운로드 | 497MB | **399MB** |
+| codex 바이너리 압축 해제 | 1942ms | **354ms** |
+| 콜드 pull (루프백) | 14.0s | **10.7s** |
+
+`force-compression=true` 가 필수입니다. 없으면 buildx 가 부모 이미지의 gzip 레이어를 그대로
+통과시켜서, 설정은 걸려 있는데 아무 효과가 없습니다.
+
+`COMPRESSION=gzip hunyimg build` 로 되돌릴 수 있습니다.
+
+### 압축 해제 후 1.5GB 는 왜인가
+
+| | 크기 |
+|---|---|
+| codex + claude 바이너리 | 559MB |
+| gcc 툴체인 (build-essential) | 205MB |
+| node + npm | 139MB |
+| uv / gh / python3 | 145MB |
+
+`codex`(297MB) 와 `claude`(262MB) 가 절반 이상인데 둘 다 이미 strip 된 정적 바이너리라
+줄일 방법이 없습니다. claude 는 Node 런타임을 통째로 품은 SEA 라서 우리가 설치한 `node` 와
+중복이지만, npm 배포판도 같은 바이너리를 내려받으므로 이득이 없습니다.
+
+문서·man·locale·apt 캐시는 이미 제거된 상태입니다.
+
+줄일 수 있는 유일한 후보는 **build-essential (205MB, 압축 후 72MB)** 입니다. 빼면 min 이
+399MB → 327MB, 압축 해제 1.5GB → 1.2GB 가 됩니다. 다만 네이티브 npm 모듈 빌드와 cgo 가
+불가능해지므로 기본값으로는 유지합니다.

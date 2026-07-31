@@ -792,3 +792,49 @@ func TestBakeVerifiesTheLoginsSurvive(t *testing.T) {
 		t.Error("bake does not warn when a credential failed to carry over")
 	}
 }
+
+// Layers are served zstd, not gzip: ~20% smaller and several times faster to
+// decompress, which is most of the wait after the bytes land. buildx needs
+// force-compression, or it passes the parent's gzip layers straight through
+// and the setting silently does nothing.
+func TestPublishedLayersUseZstd(t *testing.T) {
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	i := strings.Index(src, "func (s *server) publish(")
+	if i < 0 {
+		t.Fatal("publish not found")
+	}
+	pub := src[i:]
+	if j := strings.Index(pub, "\nfunc "); j > 0 {
+		pub = pub[:j]
+	}
+	if !strings.Contains(pub, "compression=zstd") {
+		t.Error("publish does not request zstd layers")
+	}
+	if !strings.Contains(pub, "force-compression=true") {
+		t.Error("publish omits force-compression, so buildx will pass through " +
+			"the parent's gzip layers and zstd will silently not apply")
+	}
+	// Plain `docker build` cannot set layer compression at all.
+	if strings.Contains(pub, `"docker", "build"`) {
+		t.Error("publish uses `docker build`, which cannot emit zstd layers")
+	}
+}
+
+// The image build must agree with publish, or the parent layers are gzip and
+// every vended tag pays to recompress them.
+func TestImageBuildUsesZstd(t *testing.T) {
+	b, err := os.ReadFile("../hunyimg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	for _, want := range []string{"COMPRESSION=${COMPRESSION:-zstd}", "force-compression=true"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("hunyimg build is missing %q", want)
+		}
+	}
+}

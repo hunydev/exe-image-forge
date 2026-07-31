@@ -222,12 +222,20 @@ func (s *server) publish(repo, variant, tag string) error {
 		return err
 	}
 	dst := fmt.Sprintf("127.0.0.1:5000/%s:%s", repo, tag)
-	cmd := exec.Command("docker", "build", "--provenance=false", "--sbom=false", "-t", dst, dir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("docker build: %v: %s", err, out)
-	}
-	if out, err := exec.Command("docker", "push", dst).CombinedOutput(); err != nil {
-		return fmt.Errorf("docker push: %v: %s", err, out)
+	// zstd rather than gzip: ~20% smaller on the wire and several times faster
+	// to decompress, which is most of what the user waits for after the bytes
+	// land. force-compression is required -- without it buildx passes through
+	// whatever the parent already has, silently reverting to gzip.
+	//
+	// This builds and pushes in one step; the blobs are already in the
+	// registry from the parent image, so it is a metadata-only push.
+	out, err := exec.Command("docker", "buildx", "build",
+		"--provenance=false", "--sbom=false",
+		"--output", "type=image,name="+dst+
+			",compression=zstd,compression-level=9,force-compression=true,push=true",
+		dir).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker buildx build: %v: %s", err, out)
 	}
 	return nil
 }
