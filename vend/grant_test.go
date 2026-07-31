@@ -161,10 +161,6 @@ func TestV2EnforcesTokenRepositoryMethodAndExpiry(t *testing.T) {
 		Token: "valid-token", Repo: "forge/dev", Tag: "aaaaaaaaaaaaaaaa",
 		Expires: time.Now().Add(time.Hour),
 	}
-	s.byToken["expired-token"] = &Grant{
-		Token: "expired-token", Repo: "forge/dev", Tag: "bbbbbbbbbbbbbbbb",
-		Expires: time.Now().Add(-time.Hour),
-	}
 
 	t.Run("valid scoped read", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet,
@@ -181,6 +177,14 @@ func TestV2EnforcesTokenRepositoryMethodAndExpiry(t *testing.T) {
 			t.Errorf("backing received path=%q auth=%q", gotPath, gotAuth)
 		}
 	})
+
+	// Add the expired entry only after checking the backing request. Expiry
+	// cleanup intentionally runs asynchronously and would otherwise race with
+	// the test's request recorder under -race.
+	s.byToken["expired-token"] = &Grant{
+		Token: "expired-token", Repo: "forge/dev", Tag: "bbbbbbbbbbbbbbbb",
+		Expires: time.Now().Add(-time.Hour),
+	}
 
 	for _, tc := range []struct {
 		name, method, path string
