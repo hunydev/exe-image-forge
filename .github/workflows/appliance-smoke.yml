@@ -24,6 +24,10 @@ jobs:
 
       - name: Boot systemd appliance
         run: |
+          # GitHub's runner root is already overlayfs. Nested overlay mounts
+          # are rejected, so use vfs only in this smoke-test container.
+          printf '%s\n' '{"storage-driver":"vfs"}' \
+            >"$RUNNER_TEMP/forge-docker-daemon.json"
           docker run --detach \
             --name exe-image-forge-smoke \
             --hostname forge-smoke \
@@ -31,6 +35,7 @@ jobs:
             --cgroupns=host \
             --env FORGE_AUTO_BUILD=0 \
             --publish 127.0.0.1:18000:8000 \
+            --volume "$RUNNER_TEMP/forge-docker-daemon.json:/etc/docker/daemon.json:ro" \
             ghcr.io/hunydev/exe-image-forge:latest
 
       - name: Verify first boot and web readiness
