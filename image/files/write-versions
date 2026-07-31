@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Write the tool version manifest read by `hunyimg versions` and the admin UI.
+# Kept separate from update-ai-clis because the optional components (go, gemini)
+# are layered on afterwards, and the manifest must describe the finished image.
+set -uo pipefail
+
+v(){ "$@" 2>/dev/null | head -1 | tr -d '"' || true; }
+opt(){ command -v "$1" >/dev/null 2>&1 && v "$@" || echo "not installed"; }
+
+cat > /etc/ai-cli-versions.json <<JSON
+{
+  "updated": "$(date -Is)",
+  "codex": "$(opt codex --version)",
+  "claude": "$(opt claude --version)",
+  "gemini": "$(opt gemini --version)",
+  "gh": "$(opt gh --version)",
+  "node": "$(opt node --version)",
+  "python": "$(opt python3 --version)",
+  "uv": "$(opt uv --version)",
+  "go": "$(command -v go >/dev/null 2>&1 && go version 2>/dev/null | awk '{print $3}' || echo 'not installed')"
+}
+JSON

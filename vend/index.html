@@ -43,6 +43,12 @@ pre{background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:12
 .sepwrap::before,.sepwrap::after{content:"";flex:1;height:1px;background:var(--line)}
 .pkok{margin-top:12px;padding:10px 12px;border-radius:8px;font-size:13px;
   background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.35);color:#7ee787}
+.ck{display:flex;align-items:center;gap:9px;margin:7px 0;cursor:pointer;font-size:14px;
+  color:var(--fg);text-transform:none;letter-spacing:normal}
+.ck input{width:16px;height:16px;accent-color:var(--acc);margin:0;cursor:pointer}
+.ck em{color:var(--mut);font-style:normal;font-size:12px;margin-left:7px}
+.szline{margin-top:10px;font-size:12px;color:var(--mut)}
+.szline b{color:var(--fg);font-weight:600}
 kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px}
 </style>
 </head>
@@ -67,11 +73,22 @@ kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1p
       <div><label for="repo">Image</label><select id="repo"></select></div>
       <div><label for="ttl">TTL (분)</label><input id="ttl" type="number" min="1" max="1440" value="30"></div>
     </div>
+    <div class="f">
+      <label>추가 구성요소</label>
+      <div class="szline" style="margin:0 0 6px">기본은 최소 구성입니다. codex · claude · gh · node · python · uv 는 항상 포함됩니다.</div>
+      <label class="ck"><input type="checkbox" id="c-gemini">
+        <span>Gemini CLI<em id="sz-gemini"></em></span></label>
+      <label class="ck"><input type="checkbox" id="c-go">
+        <span>Go 툴체인<em id="sz-go"></em></span></label>
+      <div class="szline">선택한 구성: <b id="vname">min</b> · 다운로드 약 <b id="vsize">-</b></div>
+      <div class="err hide" id="verr"></div>
+    </div>
     <button id="go">이미지 경로 발급</button>
     <div class="err hide" id="err"></div>
   </div>
 
   <div class="card hide" id="out">
+    <div class="f"><div class="hd"><label>구성</label><span class="exp" id="vout"></span></div></div>
     <div class="f"><div class="hd"><label>만료</label><span class="exp" id="exp"></span></div></div>
     <div class="f"><div class="hd"><label>exe.dev 로 VM 생성</label><button class="cp" data-c="exe">copy</button></div><pre id="exe"></pre></div>
     <div class="f"><div class="hd"><label>docker pull</label><button class="cp" data-c="dk">copy</button></div><pre id="dk"></pre></div>
@@ -85,6 +102,13 @@ const $=s=>document.querySelector(s);
 fetch('/api/info').then(r=>r.json()).then(d=>{
   $('#repo').innerHTML=d.repos.map(r=>`<option>${r}</option>`).join('');
   if(d.ttl_minutes)$('#ttl').value=d.ttl_minutes;
+  VARIANTS=d.variants||{};
+  // Show what each toggle actually costs, so the choice is informed.
+  const delta=(a,b)=>{const x=VARIANTS[a],y=VARIANTS[b];
+    return (x&&y&&x.bytes&&y.bytes)?`+${Math.round((y.bytes-x.bytes)/1048576)}MB`:''};
+  $('#sz-gemini').textContent=delta('min','gemini');
+  $('#sz-go').textContent=delta('min','go');
+  updateVariant();
 }).catch(()=>{});
 
 // Warn about credential problems before an image path is handed out, so a
@@ -104,13 +128,15 @@ async function grant(){
   const b=$('#go');b.disabled=true;b.textContent='발급 중...';$('#err').classList.add('hide');
   try{
     const r=await fetch('/api/grant',{method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({password:$('#pw').value,repo:$('#repo').value,ttl:+$('#ttl').value})});
+      body:JSON.stringify({password:$('#pw').value,repo:$('#repo').value,ttl:+$('#ttl').value,
+        with_go:$('#c-go').checked,with_gemini:$('#c-gemini').checked})});
     if(!r.ok)throw new Error(await r.text());
     const d=await r.json();
     $('#exe').textContent=d.exe_cmd;
     $('#dk').textContent=d.docker_cmd;
     $('#raw').textContent=d.image;
     $('#exp').textContent=new Date(d.expires).toLocaleString()+`  (${d.ttl_minutes}분)`;
+    $('#vout').textContent=d.variant+(VARIANTS[d.variant]?.size?` · ${VARIANTS[d.variant].size}`:'');
     $('#out').classList.remove('hide');
     b.textContent='재발급';
   }catch(e){
@@ -118,6 +144,29 @@ async function grant(){
     b.textContent='이미지 경로 발급';
   }finally{b.disabled=false}
 }
+// ---- variant picker ----
+// Both components default to off: the smallest image that still runs codex and
+// claude is the common case, and pulling 340MB of extras should be a decision
+// rather than an accident.
+let VARIANTS={};
+function variantName(){
+  const g=$('#c-go').checked, m=$('#c-gemini').checked;
+  return g&&m?'go-gemini':g?'go':m?'gemini':'min';
+}
+function updateVariant(){
+  const v=variantName();
+  $('#vname').textContent=v;
+  const info=VARIANTS[v];
+  $('#vsize').textContent=info&&info.size?info.size:'-';
+  // Warn rather than silently failing at grant time if a variant is missing.
+  const missing=info&&info.built===false;
+  $('#verr').classList.toggle('hide',!missing);
+  if(missing)$('#verr').textContent=`'${v}' 구성이 아직 빌드되지 않았습니다. 관리 페이지에서 build 하세요.`;
+  $('#go').disabled=!!missing;
+}
+$('#c-go').onchange=updateVariant;
+$('#c-gemini').onchange=updateVariant;
+
 $('#go').onclick=grant;
 $('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')grant()});
 

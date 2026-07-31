@@ -66,6 +66,13 @@ update_claude(){
 # --- gemini: npm global ---------------------------------------------------
 update_gemini(){
   local cur
+  # Only update gemini if it is already present. Images can be built without
+  # it, and the boot timer must not silently reinstate a component the user
+  # deliberately excluded.
+  if ! command -v gemini >/dev/null 2>&1 && [ "${INSTALL_MISSING:-0}" != "1" ]; then
+    say "gemini not installed in this image; skipping"
+    return 0
+  fi
   cur=$(gemini --version 2>/dev/null | head -1 || true)
   say "gemini ${cur:-none} -> checking"
   npm install -g @google/gemini-cli@latest >/dev/null 2>&1 \
@@ -95,18 +102,7 @@ for t in $only; do
   esac
 done
 
-# Record what we ended up with so the admin page and `verify` can report it
-# without having to run four slow CLIs.
-{
-  echo "{"
-  printf '  "updated": "%s",\n' "$(date -Is)"
-  printf '  "codex": "%s",\n'  "$(codex --version 2>/dev/null | head -1 | tr -d '"')"
-  printf '  "claude": "%s",\n' "$(claude --version 2>/dev/null | head -1 | tr -d '"')"
-  printf '  "gemini": "%s",\n' "$(gemini --version 2>/dev/null | head -1 | tr -d '"')"
-  printf '  "gh": "%s",\n'     "$(gh --version 2>/dev/null | head -1 | tr -d '"')"
-  printf '  "node": "%s",\n'   "$(node --version 2>/dev/null)"
-  printf '  "go": "%s"\n'      "$(go version 2>/dev/null | awk '{print $3}')"
-  echo "}"
-} > /etc/ai-cli-versions.json 2>/dev/null || true
+# Refresh the manifest so `hunyimg versions` reflects what just happened.
+/usr/local/bin/write-versions 2>/dev/null || true
 
 exit $rc

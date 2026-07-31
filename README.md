@@ -155,18 +155,33 @@ base 를 다시 빌드하고 (자격증명이 있으면) dev 를 다시 굽습�
 - 결과를 `/etc/ai-cli-versions.json` 에 기록 → 관리 페이지 "도구 버전" 카드와 `hunyimg versions` 가 이걸 읽습니다
 - Dockerfile 도 같은 스크립트로 설치하므로 "최신 버전 구하는 법" 정의가 한 곳뿐이고, 업데이트 경로가 매 빌드마다 검증됩니다
 
-## 이미지 크기
+## 이미지 구성 (variant)
 
-`ubuntu:24.04` 기준 581MB (압축 전). 큰 항목:
+무거운 선택 항목은 **홈 화면에서 이미지를 요청할 때** 체크박스로 고릅니다. 둘 다 기본은 **꺼짐**입니다.
 
-| 항목 | 크기 |
-|---|---|
-| claude + codex (네이티브 바이너리) | ~586MB 원본, 레이어 공유 |
-| nodejs + npm 글로벌 (gemini-cli 100MB) | ~230MB |
-| go 툴체인 (test/api/doc 제거 후) | 240MB |
-| uv | 55MB |
-| build-essential (gcc/g++/binutils) | ~150MB |
+| 구성 | 태그 | 다운로드 | 추가 |
+|---|---|---|---|
+| 최소 (기본) | `min` | 497MB | — |
+| + Gemini CLI | `gemini` | 517MB | +21MB |
+| + Go 툴체인 | `go` | 559MB | +62MB |
+| + 둘 다 | `go-gemini` | 580MB | +83MB |
 
-`WITH_GO=0 hunyimg build` 로 Go 툴체인을 뺄 수 있습니다 (240MB 절약). 나머지는 모두
-요청하신 요구사항(node/npm/npx, python, uv/uvx, go, gh, codex, claude, gemini)에 직접 대응하므로
-빼면 기능이 사라집니다.
+항상 포함: codex · claude · gh · node/npm/npx · python · uv/uvx · git · build-essential.
+
+네 구성 모두 미리 빌드해 두고, 요청 시 해당 variant 를 토큰 경로로 발급합니다.
+**선택 항목은 Dockerfile 의 마지막 레이어**라서 네 구성이 그 아래 레이어(codex+claude 587MB 포함)를
+전부 공유합니다 — 레지스트리에 이 blob 이 한 번만 저장됩니다. 순진하게 앞쪽에 뒀다면 구성마다
+587MB 를 중복 저장했을 겁니다. 이 순서는 테스트로 고정해 뒀습니다.
+
+표의 크기는 **압축 크기**(= 레지스트리 매니페스트의 레이어 합계 = 실제 `docker pull` 전송량)입니다.
+`docker images` 가 보여주는 2.1GB 는 압축을 푼 뒤의 디스크 사용량입니다.
+
+`min` 이미지에서는 업데이트 타이머가 gemini 를 **되살리지 않습니다**. 작은 이미지를 고른 선택이
+첫 부팅 때 조용히 뒤집히면 안 되기 때문입니다.
+
+```
+hunyimg build [--fresh] [variant]   네 구성 모두(또는 하나만) 빌드
+hunyimg bake [variant]              자격증명을 각 구성 위에 굽기
+hunyimg sizes                       구성별 크기
+hunyimg versions [image]            구성별 도구 버전
+```

@@ -51,6 +51,7 @@ type Config struct {
 type Grant struct {
 	Token   string    `json:"token"`
 	Repo    string    `json:"repo"`
+	Variant string    `json:"variant,omitempty"`
 	Tag     string    `json:"tag"`
 	Expires time.Time `json:"expires"`
 	Created time.Time `json:"created"`
@@ -72,6 +73,8 @@ type server struct {
 	verMu    sync.Mutex
 	verCache map[string]string
 	verAt    time.Time
+	varCache map[string]variantInfo
+	varAt    time.Time
 
 	mu      sync.Mutex
 	byToken map[string]*Grant
@@ -188,10 +191,23 @@ func (s *server) manifestDigest(repo, tag string) (string, error) {
 // source image, so the digest is unique to this tag) and pushes it. A unique
 // digest matters: registry deletion works on digests, so tags sharing a digest
 // could not be expired independently.
-func (s *server) publish(repo, tag string) error {
+// publish creates a per-grant tag pointing at the chosen variant of repo.
+func (s *server) publish(repo, variant, tag string) error {
 	src := s.cfg.SourceImage[repo]
 	if src == "" {
 		return fmt.Errorf("no source image configured for %q", repo)
+	}
+	// Source images are named <repo>:<variant>; the configured value is only a
+	// fallback for a repo that has no variants.
+	if variant != "" {
+		if base, _, ok := strings.Cut(src, ":"); ok {
+			cand := base + ":" + variant
+			if err := exec.Command("docker", "image", "inspect", cand).Run(); err == nil {
+				src = cand
+			} else {
+				return fmt.Errorf("variant %q of %s is not built yet", variant, repo)
+			}
+		}
 	}
 	if out, err := exec.Command("docker", "image", "inspect", src).CombinedOutput(); err != nil {
 		return fmt.Errorf("source image %s missing: %s", src, out)
@@ -239,10 +255,31 @@ type grantReq struct {
 	Password string `json:"password"`
 	Repo     string `json:"repo"`
 	TTL      int    `json:"ttl"`
+	// WithGo and WithGemini pick the image variant. Both default to false: the
+	// smallest useful image is the default, and heavy optional components are
+	// opt-in per request.
+	WithGo     bool `json:"with_go"`
+	WithGemini bool `json:"with_gemini"`
+}
+
+// variantFor maps the requested components to a built image variant. The
+// variant names are also the tags of the source images.
+func variantFor(withGo, withGemini bool) string {
+	switch {
+	case withGo && withGemini:
+		return "go-gemini"
+	case withGo:
+		return "go"
+	case withGemini:
+		return "gemini"
+	default:
+		return "min"
+	}
 }
 
 type grantResp struct {
 	Repo      string `json:"repo"`
+	Variant   string `json:"variant"`
 	Tag       string `json:"tag"`
 	Image     string `json:"image"`
 	Token     string `json:"token"`
@@ -313,8 +350,9 @@ func (s *server) handleGrant(w http.ResponseWriter, r *http.Request) {
 		ttl = 1440
 	}
 
+	variant := variantFor(req.WithGo, req.WithGemini)
 	tag := randHex(8)
-	if err := s.publish(repo, tag); err != nil {
+	if err := s.publish(repo, variant, tag); err != nil {
 		log.Printf("publish: %v", err)
 		http.Error(w, "publish failed: "+err.Error(), 500)
 		return
@@ -322,6 +360,7 @@ func (s *server) handleGrant(w http.ResponseWriter, r *http.Request) {
 	g := &Grant{
 		Token:   randHex(16),
 		Repo:    repo,
+		Variant: variant,
 		Tag:     tag,
 		Created: time.Now(),
 		Expires: time.Now().Add(time.Duration(ttl) * time.Minute),
@@ -339,6 +378,7 @@ func (s *server) handleGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := grantResp{
 		Repo:      repo,
+		Variant:   variant,
 		Tag:       tag,
 		Image:     image,
 		Token:     g.Token,
@@ -349,7 +389,7 @@ func (s *server) handleGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
-	log.Printf("granted token=%s… %s:%s ttl=%dm", g.Token[:6], repo, tag, ttl)
+	log.Printf("granted token=%s… %s[%s]:%s ttl=%dm", g.Token[:6], repo, variant, tag, ttl)
 }
 
 func (s *server) handleV2(w http.ResponseWriter, r *http.Request) {
@@ -543,12 +583,16 @@ func main() {
 		http.Redirect(w, r, "/favicon.svg", http.StatusMovedPermanently)
 	})
 	mux.HandleFunc("/api/info", func(w http.ResponseWriter, r *http.Request) {
+		// Computed before taking the lock: it shells out to docker, and holding
+		// s.mu across that would stall every concurrent grant.
+		vars := s.variants()
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.gcLocked()
 		out := map[string]any{
 			"repos": s.cfg.Repos, "pull_host": s.cfg.PullHost,
 			"ttl_minutes": s.cfg.TTLMinutes, "active_count": len(s.byToken),
+			"variants": vars,
 		}
 		// Only a local caller (the hunyimg CLI) sees grant detail; the
 		// proxy always sets X-Forwarded-For for remote requests.

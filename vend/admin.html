@@ -121,9 +121,12 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
 
   <div class="card">
     <h2>도구 버전</h2>
-    <p class="note" style="margin:-4px 0 10px">이미지에 설치된 버전입니다. VM 안에서는 <code>ai-cli-update.timer</code> 가
-      부팅 3분 후 + 매일 자동 업데이트하고, 이 서버는 매주 일요일 <code>hunyimg refresh</code> 로 이미지를 다시 굽습니다.</p>
+    <p class="note" style="margin:-4px 0 10px">VM 안에서는 <code>ai-cli-update.timer</code> 가 부팅 3분 후 + 매일
+      자동 업데이트하고, 이 서버는 매주 일요일 <code>hunyimg refresh</code> 로 이미지를 다시 굽습니다.</p>
     <div id="vers" class="note">-</div>
+    <p class="note" style="margin:14px 0 8px">이미지 구성별 다운로드 크기 — 사용자가 홈 화면에서 선택합니다.
+      Go 와 Gemini 는 마지막 레이어라 모든 구성이 아래 레이어를 공유합니다.</p>
+    <div id="varsizes" class="note">-</div>
   </div>
 
   <div class="card">
@@ -182,6 +185,12 @@ async function refresh(){
   $('#gate').classList.add('hide');$('#app').classList.remove('hide');
   $('#bakedat').textContent=d.baked?new Date(d.baked).toLocaleString():'없음';
   pkList().catch(()=>{});
+  fetch('/api/info').then(r=>r.json()).then(i=>{
+    const V=i.variants||{}, label={min:'min (기본)',gemini:'+ Gemini',go:'+ Go','go-gemini':'+ Go + Gemini'};
+    $('#varsizes').innerHTML=`<div class="vgrid">`+['min','gemini','go','go-gemini'].map(k=>
+      `<span class="vk">${label[k]}</span><span class="mono">${V[k]&&V[k].built?V[k].size:
+        '<span class="pill s-missing">미빌드</span>'}</span>`).join('')+`</div>`;
+  }).catch(()=>{});
   const v=d.versions;
   $('#vers').innerHTML = v
     ? `<div class="vgrid">`+Object.entries(v).filter(([k])=>k!=='updated')

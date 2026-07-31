@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -245,15 +246,20 @@ func (s *server) toolVersions() map[string]string {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "cat",
-		img, "/etc/ai-cli-versions.json").Output()
-	if err != nil {
-		// Fall back to the base image: dev may not have been baked yet.
+	// Read from the fullest variant so every optional tool reports a version;
+	// the leaner variants share these binaries, they just omit some.
+	base, _, _ := strings.Cut(img, ":")
+	var out []byte
+	var err error
+	for _, cand := range []string{base + ":go-gemini", img, "hunydev/base:go-gemini"} {
 		out, err = exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "cat",
-			"hunydev/base:latest", "/etc/ai-cli-versions.json").Output()
-		if err != nil {
-			return nil
+			cand, "/etc/ai-cli-versions.json").Output()
+		if err == nil {
+			break
 		}
+	}
+	if err != nil {
+		return nil
 	}
 	var v map[string]string
 	if err := json.Unmarshal(out, &v); err != nil {
@@ -263,4 +269,68 @@ func (s *server) toolVersions() map[string]string {
 	s.verCache, s.verAt = v, time.Now()
 	s.verMu.Unlock()
 	return v
+}
+
+// variantInfo describes one buildable image variant for the vending page.
+type variantInfo struct {
+	Built bool   `json:"built"`
+	Bytes int64  `json:"bytes,omitempty"`
+	Size  string `json:"size,omitempty"`
+}
+
+// Variants are ordered smallest-first; the names match the image tags and the
+// WITH_* build args in the Dockerfile.
+var variantNames = []string{"min", "gemini", "go", "go-gemini"}
+
+func humanSize(b int64) string {
+	const u = 1024
+	if b < u*u {
+		return fmt.Sprintf("%dKB", b/u)
+	}
+	if b < u*u*u {
+		return fmt.Sprintf("%dMB", b/(u*u))
+	}
+	return fmt.Sprintf("%.1fGB", float64(b)/float64(u*u*u))
+}
+
+// variants reports which image variants exist and how big they are, so the
+// vending page can price each option instead of making the user guess.
+//
+// The reported size is the compressed size, which matches the sum of the layer
+// blobs in the registry manifest and is therefore what a `docker pull`
+// actually transfers. The on-disk size after unpacking is several times larger.
+func (s *server) variants() map[string]variantInfo {
+	s.verMu.Lock()
+	if s.varCache != nil && time.Since(s.varAt) < 2*time.Minute {
+		v := s.varCache
+		s.verMu.Unlock()
+		return v
+	}
+	s.verMu.Unlock()
+
+	// Price the variants using whichever repo the user will actually pull.
+	// The baked dev image is the interesting one when it exists.
+	repo := "hunydev/base"
+	if s.cfg.DevImage != "" {
+		if _, err := exec.Command("docker", "image", "inspect", s.cfg.DevImage).Output(); err == nil {
+			repo = "hunydev/dev"
+		}
+	}
+
+	out := map[string]variantInfo{}
+	for _, name := range variantNames {
+		info := variantInfo{}
+		b, err := exec.Command("docker", "image", "inspect", repo+":"+name,
+			"--format", "{{.Size}}").Output()
+		if err == nil {
+			if n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil {
+				info.Built, info.Bytes, info.Size = true, n, humanSize(n)
+			}
+		}
+		out[name] = info
+	}
+	s.verMu.Lock()
+	s.varCache, s.varAt = out, time.Now()
+	s.verMu.Unlock()
+	return out
 }

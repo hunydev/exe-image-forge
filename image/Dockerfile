@@ -45,20 +45,6 @@ RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg -
     npm install -g npm@latest && npm cache clean --force && \
     node --version && npm --version && npx --version
 
-# --- go ------------------------------------------------------------------
-# WITH_GO=0 drops the Go toolchain (~240MB after slimming). Everything else in
-# the image works without it; only `go`/`gofmt` disappear.
-ARG WITH_GO=1
-RUN if [ "$WITH_GO" = "1" ]; then \
-      ARCH=$(dpkg --print-architecture) && \
-      GO_VERSION=$(curl -fsSL 'https://go.dev/dl/?mode=json' | jq -r '.[0].version') && \
-      curl -fsSL "https://go.dev/dl/${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -xzC /usr/local && \
-      ln -s /usr/local/go/bin/go /usr/local/bin/go && \
-      ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
-      rm -rf /usr/local/go/test /usr/local/go/api /usr/local/go/doc && \
-      go version ; \
-    else echo "skipping go toolchain" ; fi
-
 # --- uv / uvx ------------------------------------------------------------
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh && \
     uv --version && uvx --version
@@ -116,18 +102,45 @@ RUN chmod 644 /etc/systemd/system/shelley.socket /etc/systemd/system/shelley.ser
 # so there is exactly one definition of "how do I get the current version" and
 # the update path is exercised on every build.
 COPY files/update-ai-clis /usr/local/bin/update-ai-clis
+COPY files/write-versions /usr/local/bin/write-versions
 COPY files/ai-cli-update.service /etc/systemd/system/ai-cli-update.service
 COPY files/ai-cli-update.timer /etc/systemd/system/ai-cli-update.timer
 # CLI_REFRESH busts the layer cache when we want fresh CLI versions without
 # rebuilding the (slow, stable) layers underneath.
 ARG CLI_REFRESH=0
-RUN chmod 755 /usr/local/bin/update-ai-clis && \
+RUN chmod 755 /usr/local/bin/update-ai-clis /usr/local/bin/write-versions && \
     chmod 644 /etc/systemd/system/ai-cli-update.service /etc/systemd/system/ai-cli-update.timer && \
     systemctl enable ai-cli-update.timer && \
     echo "refresh=${CLI_REFRESH}" && \
-    /usr/local/bin/update-ai-clis && \
-    codex --version && claude --version && gemini --version && \
-    cat /etc/ai-cli-versions.json
+    TOOLS="codex claude gh" /usr/local/bin/update-ai-clis && \
+    codex --version && claude --version
+
+# --- optional components -------------------------------------------------
+# These are deliberately the last layers in the image. Everything above is
+# shared by every variant, so a registry stores the expensive codex/claude
+# blobs once no matter how many combinations are published.
+
+# Gemini CLI (~100MB of node_modules).
+ARG WITH_GEMINI=0
+RUN if [ "$WITH_GEMINI" = "1" ]; then \
+      INSTALL_MISSING=1 TOOLS=gemini /usr/local/bin/update-ai-clis && gemini --version ; \
+    else echo "skipping gemini cli" ; fi
+
+# Go toolchain (~240MB after dropping its test corpus and API history).
+ARG WITH_GO=0
+RUN if [ "$WITH_GO" = "1" ]; then \
+      ARCH=$(dpkg --print-architecture) && \
+      GO_VERSION=$(curl -fsSL 'https://go.dev/dl/?mode=json' | jq -r '.[0].version') && \
+      curl -fsSL "https://go.dev/dl/${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -xzC /usr/local && \
+      ln -s /usr/local/go/bin/go /usr/local/bin/go && \
+      ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
+      rm -rf /usr/local/go/test /usr/local/go/api /usr/local/go/doc && \
+      go version ; \
+    else echo "skipping go toolchain" ; fi
+
+
+# Record the final tool set, now that the optional pieces are decided.
+RUN /usr/local/bin/write-versions && cat /etc/ai-cli-versions.json
 
 # --- slimming ------------------------------------------------------------
 # Documentation, changelogs and vim's runtime are dead weight in an image whose

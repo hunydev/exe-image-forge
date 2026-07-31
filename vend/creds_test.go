@@ -334,3 +334,102 @@ func TestUpdaterIsFaultTolerant(t *testing.T) {
 		t.Error("timer has no jitter; many VMs would stampede the release servers")
 	}
 }
+
+// The variant mapping is the contract between the web form, the image tags and
+// the Dockerfile build args; a mismatch means the wrong image gets vended.
+func TestVariantFor(t *testing.T) {
+	for _, tc := range []struct {
+		withGo, withGemini bool
+		want               string
+	}{
+		{false, false, "min"},
+		{false, true, "gemini"},
+		{true, false, "go"},
+		{true, true, "go-gemini"},
+	} {
+		if got := variantFor(tc.withGo, tc.withGemini); got != tc.want {
+			t.Errorf("variantFor(go=%v,gemini=%v) = %q, want %q",
+				tc.withGo, tc.withGemini, got, tc.want)
+		}
+	}
+
+	// The smallest image must be what you get when you ask for nothing, since
+	// an empty JSON body decodes to all-false.
+	var req grantReq
+	if err := json.Unmarshal([]byte(`{"repo":"hunydev/dev"}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if v := variantFor(req.WithGo, req.WithGemini); v != "min" {
+		t.Errorf("a request that omits the toggles yields %q, want the minimal image", v)
+	}
+
+	// Every variant the server can produce must be one the build script knows
+	// how to build, and vice versa.
+	script, err := os.ReadFile("../hunyimg")
+	if err != nil {
+		t.Skipf("hunyimg not readable: %v", err)
+	}
+	for _, name := range variantNames {
+		if !strings.Contains(string(script), name+")") {
+			t.Errorf("variant %q has no case in hunyimg's variant_args", name)
+		}
+	}
+	for _, combo := range [][2]bool{{false, false}, {false, true}, {true, false}, {true, true}} {
+		v := variantFor(combo[0], combo[1])
+		found := false
+		for _, n := range variantNames {
+			if n == v {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("variantFor produced %q, which is not in variantNames", v)
+		}
+	}
+}
+
+// Optional components must be the last layers in the Dockerfile. If they were
+// earlier, each variant would get its own copy of the ~590MB codex+claude
+// layer and the registry would balloon.
+func TestOptionalComponentsAreLastLayers(t *testing.T) {
+	b, err := os.ReadFile("../image/Dockerfile")
+	if err != nil {
+		t.Skipf("Dockerfile not readable: %v", err)
+	}
+	df := string(b)
+	cli := strings.Index(df, "TOOLS=\"codex claude gh\"")
+	if cli < 0 {
+		t.Fatal("could not find the AI CLI install step")
+	}
+	for _, arg := range []string{"ARG WITH_GEMINI", "ARG WITH_GO"} {
+		i := strings.Index(df, arg)
+		if i < 0 {
+			t.Errorf("%s missing from Dockerfile", arg)
+			continue
+		}
+		if i < cli {
+			t.Errorf("%s appears before the expensive CLI layer; every variant "+
+				"would duplicate codex+claude instead of sharing them", arg)
+		}
+	}
+	// Defaults in the Dockerfile must match the defaults the web form sends.
+	if !strings.Contains(df, "ARG WITH_GO=0") {
+		t.Error("WITH_GO should default to 0 to match the web form's default")
+	}
+	if !strings.Contains(df, "ARG WITH_GEMINI=0") {
+		t.Error("WITH_GEMINI should default to 0 to match the web form's default")
+	}
+}
+
+// An image built without gemini must not have it reinstated by the update
+// timer, or the user's choice of a smaller image would silently expire.
+func TestUpdaterDoesNotReinstateOmittedComponents(t *testing.T) {
+	b, err := os.ReadFile("../image/files/update-ai-clis")
+	if err != nil {
+		t.Skipf("update script not readable: %v", err)
+	}
+	if !strings.Contains(string(b), "INSTALL_MISSING") {
+		t.Error("update_gemini has no guard against installing into an image " +
+			"that deliberately excluded it")
+	}
+}
