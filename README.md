@@ -226,7 +226,7 @@ hunyimg context [variant]   # AI CLI 가 읽게 될 내용 확인
 | gh | `gh auth login --git-protocol https` | device code |
 | codex | `codex login --device-auth` | device code |
 | claude | **`claude auth login`** | platform.claude.com 리다이렉트 + 코드 붙여넣기 |
-| gemini | `gemini` | localhost 콜백 → 릴레이 필요 |
+| gemini | **`NO_BROWSER=true gemini`** | codeassist.google.com 리다이렉트 + 코드 붙여넣기 |
 
 **`claude setup-token` 을 쓰면 안 됩니다.** 이 명령은 토큰을 화면에 출력만 하고
 (`export CLAUDE_CODE_OAUTH_TOKEN=<token>` 용) 디스크에 아무것도 저장하지 않습니다.
@@ -237,3 +237,41 @@ hunyimg context [variant]   # AI CLI 가 읽게 될 내용 확인
 관리 터미널과 `hunyimg auth` 는 **`hunydev/base:go-gemini`** 에서 실행됩니다.
 기본 구성(`min`)에는 gemini 가 없어서 로그인 셸에서 `gemini: command not found` 가 납니다.
 자격증명은 구성과 무관하게 `$AUTHHOME` 하나에 모입니다.
+
+
+## bake 는 자격증명만 담습니다
+
+관리 터미널에서 AI 에이전트에게 프롬프트를 입력하면 그 내용이 `$AUTHHOME` 에 남습니다:
+
+- `.gemini/tmp/<project>/logs.json`, `.gemini/tmp/<project>/chats/*.jsonl` — 프롬프트 전문
+- `.codex/state_*.sqlite`, `.codex/logs_*.sqlite` — 세션·스레드
+- `.bash_history` — 터미널에서 친 명령
+- `.claude.json` — 계정 ID, 프로젝트 목록
+
+예전 bake 는 `$AUTHHOME` 전체를 tar 로 묶고 몇 개만 `--exclude` 했기 때문에 **이것들이 전부
+배포 이미지에 들어갔습니다.** 이미지를 받아간 사람이 읽을 수 있는 상태였습니다.
+
+지금은 `CRED_FILES` **화이트리스트**에 있는 파일만 복사합니다. 빠뜨린 것이 유출되는 게 아니라,
+빠뜨린 것은 그냥 안 들어갑니다. bake 할 때마다 담기는 파일 목록을 출력합니다.
+
+```
+==> baking 10 credential file(s):
+  /.codex/auth.json
+  /.claude/.credentials.json
+  /.gemini/gemini-credentials.json
+  ...
+```
+
+## Gemini 자격증명은 호스트에 묶여 있습니다
+
+Gemini CLI 0.53 은 토큰을 `~/.gemini/gemini-credentials.json` 에 **암호화**해 저장하는데,
+키가 `scrypt(hostname + username)` 입니다. 이미지가 다른 호스트에서 부팅되면 복호화가 불가능해서
+**파일을 그대로 복사하면 로그인이 안 넘어갑니다.**
+
+그래서 bake 는 로그인한 이 호스트에서 `image/files/gemini-export-creds.js` 로 먼저 변환합니다:
+
+- OAuth 로그인 → 평문 `oauth_creds.json` (CLI 가 기본으로 읽는 형식)
+- API 키 로그인 → 이미지에 `ENV GEMINI_API_KEY=...`
+
+`.gemini/oauth_creds.json` 만 찾던 예전 코드가 로그인을 인식하지 못한 것도 같은 이유입니다.
+지금은 두 형식을 모두 인식합니다.

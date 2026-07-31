@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -188,29 +189,51 @@ func inspectCreds(home string) []Cred {
 	out = append(out, cl)
 
 	// --- gemini -----------------------------------------------------
-	// gemini: no device flow exists; it always spawns a localhost listener, so
-	// the callback URL has to be relayed back into the VM. See handleRelay.
-	gm := Cred{Tool: "gemini", Name: "Gemini CLI", File: ".gemini/oauth_creds.json",
-		State: "missing", LoginCmd: "gemini", NeedsRelay: true}
-	var gma struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiryDate   int64  `json:"expiry_date"`
+	// Gemini CLI 0.53 encrypts its tokens into .gemini/gemini-credentials.json
+	// (iv:salt:ciphertext), and no longer writes the plaintext
+	// .gemini/oauth_creds.json we used to look for -- which is why a completed
+	// login kept showing as missing. Older versions still write oauth_creds,
+	// so accept either.
+	//
+	// With NO_BROWSER=true it redirects to codeassist.google.com/authcode and
+	// asks for a pasted code, so no localhost callback and no relay.
+	gm := Cred{Tool: "gemini", Name: "Gemini CLI", File: ".gemini/gemini-credentials.json",
+		State: "missing", LoginCmd: "NO_BROWSER=true gemini"}
+
+	var acct struct {
+		Active string   `json:"active"`
+		Old    []string `json:"old"`
 	}
-	if readJSON(j(".gemini", "oauth_creds.json"), &gma) == nil {
-		gm.Refreshable = gma.RefreshToken != ""
-		var acct struct {
-			Active string `json:"active"`
+	_ = readJSON(j(".gemini", "google_accounts.json"), &acct)
+
+	// Newer: encrypted blob. We cannot read an expiry out of it, and it holds a
+	// refresh token, so treat its presence as a working login.
+	if b, err := os.ReadFile(j(".gemini", "gemini-credentials.json")); err == nil &&
+		len(bytes.TrimSpace(b)) > 0 {
+		gm.State = "ok"
+		gm.Refreshable = true
+		gm.Detail = acct.Active
+		if gm.Detail == "" && len(acct.Old) > 0 {
+			gm.Detail = acct.Old[len(acct.Old)-1]
 		}
-		if readJSON(j(".gemini", "google_accounts.json"), &acct) == nil && acct.Active != "" {
+	} else {
+		// Older: plaintext oauth_creds.json, which does carry an expiry.
+		var gma struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiryDate   int64  `json:"expiry_date"`
+		}
+		if readJSON(j(".gemini", "oauth_creds.json"), &gma) == nil {
+			gm.File = ".gemini/oauth_creds.json"
+			gm.Refreshable = gma.RefreshToken != ""
 			gm.Detail = acct.Active
-		}
-		if gma.ExpiryDate > 0 {
-			gm.setExpiry(time.UnixMilli(gma.ExpiryDate))
-		} else if gma.AccessToken != "" {
-			gm.State = "ok"
-		} else {
-			gm.State = "unknown"
+			if gma.ExpiryDate > 0 {
+				gm.setExpiry(time.UnixMilli(gma.ExpiryDate))
+			} else if gma.AccessToken != "" {
+				gm.State = "ok"
+			} else {
+				gm.State = "unknown"
+			}
 		}
 	}
 	out = append(out, gm)

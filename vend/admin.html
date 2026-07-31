@@ -28,8 +28,6 @@ button.full{width:100%;margin-top:14px;padding:12px}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;padding:0 10px 8px;font-weight:600}
 td{padding:10px;border-top:1px solid var(--line);vertical-align:middle}
-tr.clk{cursor:pointer}
-tr.clk:hover td{background:#1c2128}
 .pill{display:inline-block;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
 .s-ok{background:rgba(63,185,80,.15);color:var(--ok)}
 .s-stale{background:rgba(210,153,34,.15);color:var(--warn)}
@@ -105,15 +103,17 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
       <button class="sec" data-cmd="gh auth login --git-protocol https" title="device code 방식">gh</button>
       <button class="sec" data-cmd="codex login --device-auth" title="device code 방식">codex</button>
       <button class="sec" data-cmd="claude auth login" title="platform.claude.com 리다이렉트 + 코드 붙여넣기 (setup-token 은 토큰만 출력하고 저장하지 않음)">claude</button>
-      <button class="sec" data-cmd="gemini" title="localhost 콜백 → 아래 릴레이 사용">gemini</button>
+      <button class="sec" data-cmd="NO_BROWSER=true gemini" title="codeassist.google.com 리다이렉트 + 코드 붙여넣기">gemini</button>
     </div>
     <div id="termbox"></div>
 
     <details id="relaybox" style="margin-top:14px">
-      <summary style="cursor:pointer;color:var(--mut);font-size:13px">Gemini 콜백 릴레이 — “localhost 연결 안됨” 화면이 나오면 여기에 붙여넣으세요</summary>
-      <p class="note" style="margin:12px 0 8px">Gemini CLI 만 device code 방식이 없어서, 로그인 마지막에
-        <code>http://localhost:&lt;포트&gt;/oauth2callback?...</code> 로 리다이렉트됩니다. 그 포트는 이 VM 안에 있으니
-        노트북 브라우저에서는 연결이 실패합니다. 주소창 URL 을 그대로 복사해 넣으면 VM 안에서 대신 요청합니다.</p>
+      <summary style="cursor:pointer;color:var(--mut);font-size:13px">Gemini 콜백 릴레이 — 예비 수단 (보통은 필요 없음)</summary>
+      <p class="note" style="margin:12px 0 8px"><b>먼저 <code>NO_BROWSER=true</code> 를 쓰세요.</b> 그러면 Gemini 도
+        <code>codeassist.google.com/authcode</code> 로 리다이렉트되고 코드를 붙여넣는 방식이라 localhost 콜백이 없습니다.
+        위 <b>gemini</b> 버튼이 이 방식으로 실행합니다.</p>
+      <p class="note" style="margin:0 0 8px">그래도 <code>http://localhost:&lt;포트&gt;/oauth2callback?...</code> 로
+        리다이렉트되어 “연결 안됨” 이 나오는 경우에만, 주소창 URL 을 그대로 복사해 넣으면 VM 안에서 대신 요청합니다.</p>
       <div class="row">
         <input id="relayurl" placeholder="http://localhost:52341/oauth2callback?code=...&amp;state=..." style="flex:1;min-width:280px">
         <button id="relaygo">릴레이</button>
@@ -225,14 +225,16 @@ async function refresh(){
     : `<div class="banner b-ok"><b>정상</b><span>모든 서비스가 로그인되어 있습니다.</span></div>`;
 
   maybeOpenRelay(d.creds);
-  $('#creds').innerHTML=d.creds.map(c=>`
-    <tr class="clk" data-cmd="${c.login_cmd.replace(/"/g,'&quot;')}">
+  $('#creds').innerHTML=d.creds.map(c=>{
+    const cmd=c.login_cmd.replace(/"/g,'&quot;');
+    return `
+    <tr>
       <td><b>${c.name}</b><div class="note mono">${c.file}</div></td>
       <td><span class="pill s-${c.state}">${KO[c.state]||c.state}</span></td>
       <td class="note">${c.expires?fmtLeft(c.seconds_left):'—'}</td>
       <td class="note">${c.detail||'—'}</td>
-      <td><button class="sec">로그인</button></td>
-    </tr>`).join('');
+      <td><button class="sec" data-cmd="${cmd}" title="터미널에서 실행: ${cmd}">${c.state==='ok'?'다시 로그인':'로그인'}</button></td>
+    </tr>`;}).join('');
   return true;
 }
 
@@ -286,6 +288,10 @@ function runCmd(cmd){
 }
 document.addEventListener('click',e=>{
   const t=e.target.closest('[data-cmd]'); if(!t)return;
+  // Re-authenticating a working credential can invalidate it, so make that
+  // case deliberate. Fresh logins stay one click.
+  if(t.textContent.trim()==='다시 로그인' &&
+     !confirm('이미 로그인되어 있습니다. 다시 로그인하면 기존 자격증명이 무효화될 수 있습니다. 진행할까요?')) return;
   runCmd(t.dataset.cmd);
 });
 
@@ -304,6 +310,8 @@ $('#relaygo').onclick=async()=>{
 };
 $('#relayurl').addEventListener('keydown',e=>{if(e.key==='Enter')$('#relaygo').click()});
 // Open the relay box automatically when gemini still needs a login.
+// The relay is now a fallback: NO_BROWSER=true avoids the localhost callback
+// entirely, so only offer it if gemini still reports needing it.
 function maybeOpenRelay(creds){
   const g=creds.find(c=>c.tool==='gemini');
   if(g&&g.needs_relay&&(g.state==='missing'||g.state==='expired'))$('#relaybox').open=true;

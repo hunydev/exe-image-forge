@@ -5,6 +5,9 @@ set -euo pipefail
 ROOT=/home/exedev/hunyimg
 AUTHHOME=/var/lib/hunyimg/authhome
 BASE=hunydev/base:latest
+# The variant containing every CLI: used for logins and for credential
+# conversion, since the lean ones omit gemini.
+BASE_FULL=hunydev/base:go-gemini
 DEV=hunydev/dev:latest
 CFG=/etc/hunyimg/config.json
 
@@ -12,6 +15,23 @@ CFG=/etc/hunyimg/config.json
 # all variants share the expensive codex/claude blobs and the registry stores
 # them exactly once.
 VARIANTS=(min gemini go go-gemini)
+
+# Exactly what gets baked into the shipped image. Credentials and settings
+# only -- never history, sessions, logs or caches. Adding an entry here means
+# it goes out to everyone who pulls an image, so keep it to auth material.
+CRED_FILES=(
+  .config/gh/hosts.yml
+  .config/gh/config.yml
+  .codex/auth.json
+  .codex/config.toml
+  .claude/.credentials.json
+  .claude/settings.json
+  .gemini/gemini-credentials.json
+  .gemini/oauth_creds.json
+  .gemini/google_accounts.json
+  .gemini/settings.json
+  .gitconfig
+)
 
 # variant_args prints the docker --build-arg flags for a variant tag.
 variant_args(){
@@ -26,6 +46,7 @@ variant_args(){
 
 log(){ printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die(){ printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+warn(){ printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
 
 ensure_authhome(){
   if [ ! -d "$AUTHHOME" ]; then
@@ -96,8 +117,8 @@ cmd_auth(){
              -v "$AUTHHOME":/home/exedev -w /home/exedev "$img")
   # All of these avoid a localhost OAuth callback, which would land on the
   # user's laptop rather than this VM. gh and codex use device codes; claude
-  # auth login redirects to platform.claude.com and prints a code to paste.
-  # Gemini has no device flow, so it needs the callback relay (see below).
+  # auth login redirects to platform.claude.com and prints a code to paste;
+  # gemini with NO_BROWSER=true redirects to codeassist.google.com/authcode.
   case "$tool" in
     gh)     "${run[@]}" gh auth login --git-protocol https "$@" ;;
     codex)  "${run[@]}" codex login --device-auth "$@" ;;
@@ -107,15 +128,15 @@ cmd_auth(){
     claude-token) "${run[@]}" claude setup-token ;;
     gemini)
       cat <<'EOF'
-Gemini CLI has no device-code flow. After you approve in the browser it will try
-to redirect to http://localhost:<port>/oauth2callback?... which your browser
-cannot reach (that port is here, on the VM). Copy that dead URL and either:
+NO_BROWSER=true makes Gemini redirect to https://codeassist.google.com/authcode
+and ask you to paste the code back, so no localhost callback is involved.
+
+If it somehow still sends you to http://localhost:<port>/oauth2callback?... then
+that port is here on the VM, not on your laptop. Copy that dead URL and run:
 
   hunyimg relay '<paste the whole localhost URL>'
-
-or paste it into the relay box at https://hunydev-images.exe.xyz/admin/
 EOF
-      "${run[@]}" gemini "$@" ;;
+      "${run[@]}" env NO_BROWSER=true gemini "$@" ;;
     all)    for t in gh codex claude gemini; do cmd_auth "$t"; done ;;
     *) die "usage: hunyimg auth {gh|codex|claude|gemini|all}" ;;
   esac
@@ -125,7 +146,7 @@ cmd_status(){
   ensure_authhome
   echo "auth home: $AUTHHOME"
   for f in .config/gh/hosts.yml .codex/auth.json .claude/.credentials.json .claude.json \
-           .gemini/oauth_creds.json .gemini/google_accounts.json; do
+           .gemini/gemini-credentials.json .gemini/google_accounts.json; do
     if sudo test -s "$AUTHHOME/$f"; then printf '  \033[32m✓\033[0m %s\n' "$f"; else printf '  \033[31m✗\033[0m %s\n' "$f"; fi
   done
   echo
@@ -136,7 +157,11 @@ cmd_status(){
       echo "-- gh:";     gh auth status 2>&1|sed "s/^/   /"
       echo "-- codex:";  codex login status 2>&1|sed "s/^/   /"
       echo "-- claude:"; claude auth status --text 2>&1|sed "s/^/   /"
-      echo "-- gemini:"; if [ -s ~/.gemini/oauth_creds.json ]; then echo "   logged in"; else echo "   not logged in"; fi
+      echo "-- gemini:"; if [ -s ~/.gemini/gemini-credentials.json ] || [ -s ~/.gemini/oauth_creds.json ]; then
+        # "active" is null right after login; the address is under "old".
+        acct=$(grep -oE "[A-Za-z0-9._%%+-]+@[A-Za-z0-9.-]+" ~/.gemini/google_accounts.json 2>/dev/null | head -1)
+        echo "   logged in${acct:+ ($acct)}"
+      else echo "   not logged in"; fi
     ' || true
 }
 
@@ -145,11 +170,42 @@ cmd_bake(){
   local only="${1:-}"
   CTX=$(mktemp -d)
   trap 'sudo rm -rf "${CTX:-/nonexistent}"' EXIT
-  sudo tar -C "$AUTHHOME" -cf "$CTX/home.tar" \
-    --exclude=.cache --exclude=.npm --exclude=.local/share/claude \
-    --exclude=.codex/AGENTS.md --exclude=.claude/CLAUDE.md --exclude=.gemini/GEMINI.md \
-    --exclude='*.log' --exclude=.bash_history . 2>/dev/null || true
+  # Copy ONLY credential files into the image. This used to be a denylist over
+  # the whole auth home, which shipped whatever else the admin terminal left
+  # behind: gemini writes every prompt to .gemini/tmp/*/logs.json and
+  # chats/*.jsonl, codex keeps threads in state_*.sqlite, and .bash_history
+  # records the session. Those would have been baked into an image handed to
+  # other people. An allowlist cannot leak something we forgot to think of.
+  # Gemini encrypts its credentials with a key derived from the hostname, so
+  # the encrypted file is useless in an image that boots elsewhere. Convert it
+  # to a portable form first, on this host, where it can still be decrypted.
+  GEMINI_API_KEY_BAKE=""
+  if sudo test -s "$AUTHHOME/.gemini/gemini-credentials.json"; then
+    local conv
+    conv=$(docker run --rm --entrypoint node -u 1000:1000 --hostname "$(hostname)" \
+      -v "$AUTHHOME/.gemini":/g -v "$ROOT/image/files/gemini-export-creds.js":/c.js \
+      "$BASE_FULL" /c.js /g 2>/dev/null) || true
+    case "$conv" in
+      apikey\ *) GEMINI_API_KEY_BAKE="${conv#apikey }"
+                 log "gemini: API key credential; baking GEMINI_API_KEY" ;;
+      oauth*)    log "gemini: converted OAuth token to portable oauth_creds.json" ;;
+      *)         warn "gemini: could not convert credentials; the image may not be logged in" ;;
+    esac
+  fi
+
+  local staged; staged=$(mktemp -d); chmod 755 "$staged"
+  local f
+  for f in "${CRED_FILES[@]}"; do
+    sudo test -e "$AUTHHOME/$f" || continue
+    sudo mkdir -p "$staged/$(dirname "$f")"
+    sudo cp -a "$AUTHHOME/$f" "$staged/$f"
+  done
+  sudo chown -R 1000:1000 "$staged"
+  sudo tar -C "$staged" -cf "$CTX/home.tar" . 2>/dev/null || true
   sudo chown "$(id -u):$(id -g)" "$CTX/home.tar"
+  log "baking $(sudo tar -tf "$CTX/home.tar" | grep -vc '/$') credential file(s):"
+  sudo tar -tf "$CTX/home.tar" | grep -v '/$' | sed 's/^\./  /'
+  sudo rm -rf "$staged"
   local stamp; stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
   for v in "${VARIANTS[@]}"; do
@@ -164,6 +220,10 @@ LABEL "dev.huny.image"="dev"
 LABEL "dev.huny.variant"="$v"
 LABEL "dev.huny.baked"="$stamp"
 EOF
+    # An API-key login has nothing on disk for the CLI to find; it reads the
+    # environment instead.
+    [ -n "$GEMINI_API_KEY_BAKE" ] && \
+      echo "ENV GEMINI_API_KEY=$GEMINI_API_KEY_BAKE" >> "$CTX/Dockerfile"
     docker build --provenance=false --sbom=false -t "hunydev/dev:$v" "$CTX"
   done
   docker tag hunydev/dev:min "$DEV" 2>/dev/null || true

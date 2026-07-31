@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -258,17 +259,19 @@ func TestLoginCommandsAreHeadless(t *testing.T) {
 		"gh":     "gh auth login --git-protocol https",
 		"codex":  "codex login --device-auth",
 		"claude": "claude auth login",
-		"gemini": "gemini",
+		"gemini": "NO_BROWSER=true gemini",
 	}
 	for _, c := range creds {
 		if got := want[c.Tool]; got != c.LoginCmd {
 			t.Errorf("%s: login_cmd = %q, want %q", c.Tool, c.LoginCmd, got)
 		}
 	}
-	// Only gemini lacks a device flow, so only it should ask for the relay.
+	// Every CLI now has a paste-the-code flow, so nothing should need the
+	// localhost callback relay.
 	for _, c := range creds {
-		if (c.Tool == "gemini") != c.NeedsRelay {
-			t.Errorf("%s: needs_relay = %v", c.Tool, c.NeedsRelay)
+		if c.NeedsRelay {
+			t.Errorf("%s: needs_relay is set, but all login commands avoid "+
+				"localhost callbacks now", c.Tool)
 		}
 	}
 
@@ -530,16 +533,12 @@ func TestAgentContextRegeneratesAtBoot(t *testing.T) {
 }
 
 // Baking credentials must not overlay the per-variant context files, or every
-// variant would inherit whichever one seeded the auth home.
+// variant would inherit whichever one seeded the auth home. The allowlist now
+// enforces this by construction; see TestBakeAllowlistExcludesAgentContext.
 func TestBakeDoesNotClobberAgentContext(t *testing.T) {
-	b, err := os.ReadFile("../hunyimg")
-	if err != nil {
-		t.Skipf("hunyimg not readable: %v", err)
-	}
-	src := string(b)
 	for _, f := range []string{".codex/AGENTS.md", ".claude/CLAUDE.md", ".gemini/GEMINI.md"} {
-		if !strings.Contains(src, "--exclude="+f) {
-			t.Errorf("bake does not exclude %s; the baked image would carry a "+
+		if strings.Contains(credAllowlist(t), f) {
+			t.Errorf("bake would copy %s; the baked image would carry a "+
 				"context file describing a different variant", f)
 		}
 	}
@@ -580,5 +579,170 @@ func TestClaudeCredentialPath(t *testing.T) {
 				"~/.claude/.credentials.json when libsecret is unavailable, "+
 				"which is the case in this image", c.File)
 		}
+	}
+}
+
+// Gemini CLI 0.53 encrypts tokens into .gemini/gemini-credentials.json and no
+// longer writes the plaintext oauth_creds.json, so looking only for the old
+// path reported a completed login as missing.
+func TestGeminiDetectsEncryptedCredentials(t *testing.T) {
+	home := t.TempDir()
+	write(t, home, ".gemini/gemini-credentials.json",
+		"c2d812bd:76f060d5:6d0a3037e25b7f2f70e6dab53376a484")
+	write(t, home, ".gemini/google_accounts.json", `{"active":"a@example.com"}`)
+
+	for _, c := range inspectCreds(home) {
+		if c.Tool != "gemini" {
+			continue
+		}
+		if c.State != "ok" {
+			t.Errorf("state = %q, want ok: the encrypted credential file is "+
+				"where gemini stores its login now", c.State)
+		}
+		if c.Detail != "a@example.com" {
+			t.Errorf("detail = %q, want the signed-in account", c.Detail)
+		}
+	}
+}
+
+// The older plaintext layout must keep working, including its expiry.
+func TestGeminiStillReadsLegacyPlaintextCredentials(t *testing.T) {
+	home := t.TempDir()
+	exp := time.Now().Add(time.Hour).UnixMilli()
+	write(t, home, ".gemini/oauth_creds.json", fmt.Sprintf(
+		`{"access_token":"a","refresh_token":"r","expiry_date":%d}`, exp))
+
+	for _, c := range inspectCreds(home) {
+		if c.Tool != "gemini" {
+			continue
+		}
+		if c.State != "ok" || !c.Refreshable {
+			t.Errorf("legacy creds: state=%q refreshable=%v", c.State, c.Refreshable)
+		}
+		if c.Expires == "" {
+			t.Error("legacy creds carry an expiry; it should be surfaced")
+		}
+	}
+}
+
+// Gemini gained a paste-the-code flow (NO_BROWSER=true redirects to
+// codeassist.google.com/authcode), so it no longer needs the callback relay.
+func TestGeminiLoginAvoidsLocalhostCallback(t *testing.T) {
+	for _, c := range inspectCreds(t.TempDir()) {
+		if c.Tool != "gemini" {
+			continue
+		}
+		if !strings.Contains(c.LoginCmd, "NO_BROWSER") {
+			t.Errorf("login_cmd = %q; without NO_BROWSER gemini opens a "+
+				"localhost callback the user's browser cannot reach", c.LoginCmd)
+		}
+		if c.NeedsRelay {
+			t.Error("needs_relay is set, but the paste-code flow needs no relay")
+		}
+	}
+}
+
+// bake ships an image to other people. It must copy an explicit allowlist of
+// credential files, never sweep the auth home with excludes: the admin
+// terminal leaves conversation logs there (.gemini/tmp/*/logs.json and
+// chats/*.jsonl, codex state_*.sqlite, .bash_history), and a denylist ships
+// whatever nobody thought to exclude.
+func TestBakeCopiesAnAllowlistNotTheWholeHome(t *testing.T) {
+	b, err := os.ReadFile("../hunyimg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	i := strings.Index(src, "cmd_bake()")
+	if i < 0 {
+		t.Fatal("cmd_bake not found")
+	}
+	bake := src[i:]
+	if j := strings.Index(bake, "\ncmd_"); j > 0 {
+		bake = bake[:j]
+	}
+
+	if !strings.Contains(bake, "CRED_FILES") {
+		t.Error("bake does not use the credential allowlist")
+	}
+	// Tarring the auth home directly is the bug: it takes everything present.
+	if strings.Contains(bake, `tar -C "$AUTHHOME"`) {
+		t.Error("bake tars $AUTHHOME wholesale; conversation logs and shell " +
+			"history would be baked into the published image")
+	}
+
+	// Things that must never be in the allowlist.
+	for _, bad := range []string{
+		".gemini/tmp", ".gemini/history", ".bash_history",
+		".codex/sessions", ".claude.json", ".codex/state",
+	} {
+		if strings.Contains(credAllowlist(t), bad) {
+			t.Errorf("allowlist contains %q, which holds conversation or "+
+				"session data, not credentials", bad)
+		}
+	}
+	// And the credentials that must be in it, or the image ships unauthenticated.
+	for _, want := range []string{
+		".codex/auth.json", ".claude/.credentials.json",
+		".gemini/gemini-credentials.json", ".config/gh/hosts.yml",
+	} {
+		if !strings.Contains(credAllowlist(t), want) {
+			t.Errorf("allowlist is missing %q", want)
+		}
+	}
+}
+
+func credAllowlist(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile("../hunyimg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	i := strings.Index(src, "CRED_FILES=(")
+	if i < 0 {
+		t.Fatal("CRED_FILES not defined")
+	}
+	j := strings.Index(src[i:], ")")
+	return src[i : i+j]
+}
+
+// The agent-context files are generated per variant inside the image; baking a
+// copy from the auth home would overwrite one variant's context with another's.
+func TestBakeAllowlistExcludesAgentContext(t *testing.T) {
+	for _, f := range []string{".codex/AGENTS.md", ".claude/CLAUDE.md", ".gemini/GEMINI.md"} {
+		if strings.Contains(credAllowlist(t), f) {
+			t.Errorf("allowlist contains %q; it is generated in the image", f)
+		}
+	}
+}
+
+// Gemini encrypts credentials with a key derived from scrypt(hostname+user),
+// so the file copied into an image cannot be decrypted when that image boots
+// on a different host. bake must convert it to a portable form first, on the
+// machine that logged in; otherwise every image ships a gemini that is not
+// logged in while the admin page cheerfully reports "ok".
+func TestBakeConvertsGeminiCredentialsToAPortableForm(t *testing.T) {
+	b, err := os.ReadFile("../hunyimg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	if !strings.Contains(src, "gemini-export-creds.js") {
+		t.Fatal("bake does not convert gemini credentials; the encrypted file " +
+			"is keyed to this hostname and is useless in the shipped image")
+	}
+	// The conversion has to happen on this host, so the hostname used for the
+	// key derivation matches the one that performed the login.
+	if !strings.Contains(src, `--hostname "$(hostname)"`) {
+		t.Error("conversion does not pin the hostname; the key would not derive")
+	}
+	// An API-key login has no file for the CLI to find; it reads the env.
+	if !strings.Contains(src, "ENV GEMINI_API_KEY=") {
+		t.Error("an API-key credential is never baked into the image env")
+	}
+
+	if _, err := os.Stat("../image/files/gemini-export-creds.js"); err != nil {
+		t.Errorf("converter missing: %v", err)
 	}
 }
