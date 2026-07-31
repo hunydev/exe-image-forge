@@ -6,3 +6,9 @@ description = "Pinned third-party browser distributions"
 paths = [
   '''^vend/assets/xterm\.js$''',
 ]
+# The first API guide revision used this obvious repeated hexadecimal value as
+# a structural grant-token example. It is not a credential and was replaced by
+# a named placeholder in the following commit.
+regexes = [
+  '''0123456789abcdef0123456789abcdef''',
+]

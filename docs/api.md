@@ -207,9 +207,9 @@ Success:
 {
   "repo": "exe-image-forge/dev",
   "variant": "min",
-  "tag": "0123456789abcdef",
-  "image": "images.example.com/t/0123456789abcdef0123456789abcdef/exe-image-forge/dev:0123456789abcdef",
-  "token": "0123456789abcdef0123456789abcdef",
+  "tag": "<grant-tag>",
+  "image": "images.example.com/t/<grant-token>/exe-image-forge/dev:<grant-tag>",
+  "token": "<grant-token>",
   "expires": "2026-01-15T12:30:00Z",
   "ttl_minutes": 30,
   "exe_cmd": "ssh exe.dev new --image=...",
