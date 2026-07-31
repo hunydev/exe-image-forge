@@ -293,26 +293,52 @@ type grantReq struct {
 	Password string `json:"password"`
 	Repo     string `json:"repo"`
 	TTL      int    `json:"ttl"`
-	// WithGo and WithGemini pick the image variant. Both default to false: the
-	// smallest useful image is the default, and heavy optional components are
-	// opt-in per request.
-	WithGo     bool `json:"with_go"`
-	WithGemini bool `json:"with_gemini"`
+	// Codex and Claude use pointers so older clients that omit the new fields
+	// retain the historical default (both installed). An explicit false from
+	// the current UI excludes the tool.
+	WithCodex  *bool `json:"with_codex"`
+	WithClaude *bool `json:"with_claude"`
+	WithGo     bool  `json:"with_go"`
+	WithGemini bool  `json:"with_gemini"`
 }
 
-// variantFor maps the requested components to a built image variant. The
-// variant names are also the tags of the source images.
-func variantFor(withGo, withGemini bool) string {
+func defaultTrue(v *bool) bool {
+	return v == nil || *v
+}
+
+// variantFor maps component choices to source-image tags. The four historical
+// tags keep their old meaning (Codex + Claude, optionally Go/Gemini) so existing
+// installations and cached clients continue to work.
+func variantFor(withCodex, withClaude, withGo, withGemini bool) string {
+	prefix := "core"
+	switch {
+	case withCodex && withClaude:
+		prefix = ""
+	case withCodex:
+		prefix = "codex"
+	case withClaude:
+		prefix = "claude"
+	}
+
+	suffix := ""
 	switch {
 	case withGo && withGemini:
-		return "go-gemini"
+		suffix = "go-gemini"
 	case withGo:
-		return "go"
+		suffix = "go"
 	case withGemini:
-		return "gemini"
-	default:
-		return "min"
+		suffix = "gemini"
 	}
+	if prefix == "" {
+		if suffix == "" {
+			return "min"
+		}
+		return suffix
+	}
+	if suffix == "" {
+		return prefix
+	}
+	return prefix + "-" + suffix
 }
 
 type grantResp struct {
@@ -388,7 +414,7 @@ func (s *server) handleGrant(w http.ResponseWriter, r *http.Request) {
 		ttl = 1440
 	}
 
-	variant := variantFor(req.WithGo, req.WithGemini)
+	variant := variantFor(defaultTrue(req.WithCodex), defaultTrue(req.WithClaude), req.WithGo, req.WithGemini)
 	tag := randHex(8)
 	if err := s.publish(repo, variant, tag); err != nil {
 		log.Printf("publish: %v", err)
@@ -641,7 +667,7 @@ func main() {
 		out := map[string]any{
 			"repos": s.repoInfo(), "pull_host": s.cfg.PullHost,
 			"ttl_minutes": s.cfg.TTLMinutes, "active_count": len(s.byToken),
-			"variants": vars,
+			"variants": vars, "variant_names": variantNames,
 		}
 		// Only a local caller (the exe-image-forge CLI) sees grant detail; the
 		// proxy always sets X-Forwarded-For for remote requests.

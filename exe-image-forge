@@ -20,7 +20,7 @@ BASE_REPO="${IMAGE_PREFIX}/base"
 DEV_REPO="${IMAGE_PREFIX}/dev"
 BASE="${BASE_REPO}:latest"
 # The variant containing every CLI: used for logins and for credential
-# conversion, since the lean ones omit gemini.
+# conversion, since lean variants may omit any optional tool.
 BASE_FULL="${BASE_REPO}:go-gemini"
 
 # Layer compression. zstd decompresses far faster than gzip and produces
@@ -44,10 +44,15 @@ VEND_ADDR="${FORGE_ADDR:-127.0.0.1:8000}"
 export FORGE_BASE_IMAGE="$BASE"
 export FORGE_COMMAND_PATH="${FORGE_COMMAND_PATH:-/usr/local/bin/exe-image-forge}"
 
-# Image variants. Optional components are the last layers in the Dockerfile, so
-# all variants share the expensive codex/claude blobs and the registry stores
-# them exactly once.
-VARIANTS=(min gemini go go-gemini)
+# The historical min/gemini/go/go-gemini tags retain Codex + Claude. Prefixes
+# describe variants with only one or neither agent, keeping old deployments and
+# cached clients compatible while allowing every large component to be omitted.
+VARIANTS=(
+  core core-gemini core-go core-go-gemini
+  codex codex-gemini codex-go codex-go-gemini
+  claude claude-gemini claude-go claude-go-gemini
+  min gemini go go-gemini
+)
 
 # Exactly what gets baked into the shipped image. Credentials and settings
 # only -- never history, sessions, logs or caches. Adding an entry here means
@@ -68,13 +73,21 @@ CRED_FILES=(
 
 # variant_args prints the docker --build-arg flags for a variant tag.
 variant_args(){
-  case "$1" in
-    min)       echo "--build-arg WITH_GO=0 --build-arg WITH_GEMINI=0" ;;
-    gemini)    echo "--build-arg WITH_GO=0 --build-arg WITH_GEMINI=1" ;;
-    go)        echo "--build-arg WITH_GO=1 --build-arg WITH_GEMINI=0" ;;
-    go-gemini) echo "--build-arg WITH_GO=1 --build-arg WITH_GEMINI=1" ;;
-    *) die "unknown variant: $1" ;;
+  local v="$1" codex=0 claude=0 go=0 gemini=0
+  case "$v" in
+    min|gemini|go|go-gemini) codex=1; claude=1 ;;
+    codex|codex-*) codex=1 ;;
+    claude|claude-*) claude=1 ;;
+    core|core-*) ;;
+    *) die "unknown variant: $v" ;;
   esac
+  case "$v" in
+    go|go-gemini|*-go|*-go-gemini) go=1 ;;
+  esac
+  case "$v" in
+    gemini|go-gemini|*-gemini|*-go-gemini) gemini=1 ;;
+  esac
+  echo "--build-arg WITH_CODEX=$codex --build-arg WITH_CLAUDE=$claude --build-arg WITH_GO=$go --build-arg WITH_GEMINI=$gemini"
 }
 
 log(){ printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -132,7 +145,7 @@ cmd_sizes(){
     local id sz
     id=$(docker image inspect "$BASE_REPO:$v" --format '{{.Size}}' 2>/dev/null) || continue
     sz=$(numfmt --to=iec <<<"$id")
-    printf '   %-12s %s\n' "$v" "$sz"
+    printf '   %-20s %s\n' "$v" "$sz"
   done
 }
 
@@ -147,8 +160,8 @@ cmd_shell(){
 cmd_auth(){
   ensure_authhome
   local tool=${1:-}; shift || true
-  # Log in against the fullest variant: the lean ones omit gemini, and the
-  # credentials land in $AUTHHOME which every variant shares.
+  # Log in against the fullest variant: lean variants may omit an AI CLI, and
+  # the credentials land in $AUTHHOME which every variant shares.
   local img="$BASE_FULL"
   docker image inspect "$img" >/dev/null 2>&1 || img="$BASE"
   local run=(docker run --rm -it --network host -e HOME=/home/exedev -u 1000:1000
@@ -276,16 +289,30 @@ EOF
     local bad=0 out
     out=$(docker run --rm -u 1000:1000 -e HOME=/home/exedev --entrypoint bash \
       "$DEV_REPO:$checked" -c '
-        gh auth status    >/dev/null 2>&1 && echo gh
-        codex login status >/dev/null 2>&1 && echo codex
-        claude auth status --json 2>/dev/null | tr -d " " | grep -q "loggedIn\":true" && echo claude
-        { [ -s ~/.gemini/gemini-credentials.json ] || [ -s ~/.gemini/oauth_creds.json ] \
-          || [ -n "${GEMINI_API_KEY:-}" ]; } && echo gemini
+        echo present:gh
+        gh auth status >/dev/null 2>&1 && echo auth:gh
+        if command -v codex >/dev/null; then
+          echo present:codex
+          codex login status >/dev/null 2>&1 && echo auth:codex
+        fi
+        if command -v claude >/dev/null; then
+          echo present:claude
+          claude auth status --json 2>/dev/null | tr -d " " | grep -q "loggedIn\":true" && echo auth:claude
+        fi
+        if command -v gemini >/dev/null; then
+          echo present:gemini
+          { [ -s ~/.gemini/gemini-credentials.json ] || [ -s ~/.gemini/oauth_creds.json ] \
+            || [ -n "${GEMINI_API_KEY:-}" ]; } && echo auth:gemini
+        fi
       ' 2>/dev/null) || true
     for t in gh codex claude gemini; do
-      grep -qx "$t" <<<"$out" || { warn "baked image: $t is NOT logged in"; bad=1; }
+      if grep -qx "present:$t" <<<"$out"; then
+        grep -qx "auth:$t" <<<"$out" || { warn "baked image: $t is NOT logged in"; bad=1; }
+      else
+        log "baked image: $t not included in variant $checked; auth check skipped"
+      fi
     done
-    [ "$bad" = 0 ] && log "verified: all four logins survive into $DEV_REPO:$checked"
+    [ "$bad" = 0 ] && log "verified: every included CLI is authenticated in $DEV_REPO:$checked"
   fi
   log "baked. vend $DEV_REPO (not $BASE_REPO) to include credentials"
 }
@@ -299,15 +326,18 @@ cmd_verify(){
     set +e
     echo "-- versions"
     node -v; python3 -V; uv --version; gh --version|head -1
-    codex --version; claude --version
+    if command -v codex >/dev/null; then codex --version; else echo "codex: not in this variant"; fi
+    if command -v claude >/dev/null; then claude --version; else echo "claude: not in this variant"; fi
     if command -v go     >/dev/null; then go version|cut -d" " -f3; else echo "go: not in this variant"; fi
     if command -v gemini >/dev/null; then gemini --version;         else echo "gemini: not in this variant"; fi
     echo "-- auth"
     gh auth status 2>&1|sed -n 2,3p
-    codex login status 2>&1|head -1
-    claude auth status --text 2>&1|head -1
-    if [ -s ~/.gemini/gemini-credentials.json ] || [ -s ~/.gemini/oauth_creds.json ] \
-       || [ -n "${GEMINI_API_KEY:-}" ]; then echo "gemini: logged in"; else echo "gemini: NOT logged in"; fi'
+    if command -v codex >/dev/null; then codex login status 2>&1|head -1; fi
+    if command -v claude >/dev/null; then claude auth status --text 2>&1|head -1; fi
+    if command -v gemini >/dev/null; then
+      if [ -s ~/.gemini/gemini-credentials.json ] || [ -s ~/.gemini/oauth_creds.json ] \
+         || [ -n "${GEMINI_API_KEY:-}" ]; then echo "gemini: logged in"; else echo "gemini: NOT logged in"; fi
+    fi'
 }
 
 cmd_import(){
@@ -488,7 +518,7 @@ case "${1:-help}" in
   *) cat <<'EOF'
 exe-image-forge - custom exe.dev image builder + time-limited image vending
 
-  exe-image-forge build [--fresh] [variant]  rebuild base images (all 4 variants)
+  exe-image-forge build [--fresh] [variant]  rebuild base images (all 16 variants)
   exe-image-forge sizes          show the size of each variant
   exe-image-forge refresh        update AI CLIs, rebuild base, re-bake dev (run by timer)
   exe-image-forge versions [img] show the tool versions baked into an image

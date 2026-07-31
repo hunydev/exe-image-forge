@@ -15,8 +15,8 @@ product.
 ## What it provides
 
 - Ubuntu 24.04 + systemd, shaped for exe.dev custom images
-- Codex CLI, Claude Code, GitHub CLI, Node.js, Python, and `uv`
-- Optional Go and Gemini CLI variants with shared image layers
+- GitHub CLI, Node.js, Python, and `uv` in every image
+- Independently selectable Codex CLI, Claude Code, Gemini CLI, and Go
 - A persistent authentication home kept outside rebuilt images
 - An explicit credential allowlist that excludes prompts, histories, and logs
 - A password/passkey-protected web UI for login, bake, and image grants
@@ -90,16 +90,20 @@ exe-image-forge password
 
 ## Image variants
 
-| Variant | Extra tools |
-| --- | --- |
-| `min` | none |
-| `gemini` | Gemini CLI |
-| `go` | Go toolchain |
-| `go-gemini` | Go toolchain and Gemini CLI |
+Codex, Claude, Gemini, and Go can each be selected independently in the web UI.
+The 16 combinations use these tag rules:
 
-Optional components are the final layers, so all variants share the large
-Codex and Claude layers. Build one variant during development with
-`exe-image-forge build go`, or all variants with `exe-image-forge build`.
+| Agent selection | Tag prefix/base |
+| --- | --- |
+| neither Codex nor Claude | `core` |
+| Codex only | `codex` |
+| Claude only | `claude` |
+| Codex + Claude | `min` (historical compatibility name) |
+
+Gemini and Go add `-gemini`, `-go`, or `-go-gemini`. The historical
+`gemini`, `go`, and `go-gemini` tags still mean Codex + Claude plus those
+components. Build one combination with `exe-image-forge build codex-go`, or all
+16 with `exe-image-forge build`.
 
 ## Common commands
 

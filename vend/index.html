@@ -75,8 +75,12 @@ kbd{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1p
       <div><label for="ttl">TTL (분)</label><input id="ttl" type="number" min="1" max="1440" value="30"></div>
     </div>
     <div class="f">
-      <label>추가 구성요소</label>
-      <div class="szline" style="margin:0 0 6px">기본은 최소 구성입니다. codex · claude · gh · node · python · uv 는 항상 포함됩니다.</div>
+      <label>구성요소</label>
+      <div class="szline" style="margin:0 0 6px">gh · node · python · uv 는 항상 포함됩니다. 큰 도구는 필요에 맞게 선택하세요.</div>
+      <label class="ck"><input type="checkbox" id="c-codex" checked>
+        <span>Codex CLI<em id="sz-codex"></em></span></label>
+      <label class="ck"><input type="checkbox" id="c-claude" checked>
+        <span>Claude Code<em id="sz-claude"></em></span></label>
       <label class="ck"><input type="checkbox" id="c-gemini">
         <span>Gemini CLI<em id="sz-gemini"></em></span></label>
       <label class="ck"><input type="checkbox" id="c-go">
@@ -111,6 +115,8 @@ fetch('/api/info').then(r=>r.json()).then(d=>{
   // Show what each toggle actually costs, so the choice is informed.
   const delta=(a,b)=>{const x=VARIANTS[a],y=VARIANTS[b];
     return (x&&y&&x.bytes&&y.bytes)?`+${Math.round((y.bytes-x.bytes)/1048576)}MB`:''};
+  $('#sz-codex').textContent=delta('claude','min');
+  $('#sz-claude').textContent=delta('codex','min');
   $('#sz-gemini').textContent=delta('min','gemini');
   $('#sz-go').textContent=delta('min','go');
   updateVariant();
@@ -134,6 +140,7 @@ async function grant(){
   try{
     const r=await fetch('/api/grant',{method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({password:$('#pw').value,repo:$('#repo').value,ttl:+$('#ttl').value,
+        with_codex:$('#c-codex').checked,with_claude:$('#c-claude').checked,
         with_go:$('#c-go').checked,with_gemini:$('#c-gemini').checked})});
     if(!r.ok)throw new Error(await r.text());
     const d=await r.json();
@@ -150,13 +157,16 @@ async function grant(){
   }finally{b.disabled=false}
 }
 // ---- variant picker ----
-// Both components default to off: the smallest image that still runs codex and
-// claude is the common case, and pulling 340MB of extras should be a decision
-// rather than an accident.
+// Codex and Claude default on for backward compatibility. Every large component
+// can still be omitted, and the names below match the Go server exactly.
 let VARIANTS={};
 function variantName(){
+  const c=$('#c-codex').checked, l=$('#c-claude').checked;
   const g=$('#c-go').checked, m=$('#c-gemini').checked;
-  return g&&m?'go-gemini':g?'go':m?'gemini':'min';
+  const prefix=c&&l?'':c?'codex':l?'claude':'core';
+  const suffix=g&&m?'go-gemini':g?'go':m?'gemini':'';
+  if(!prefix)return suffix||'min';
+  return suffix?`${prefix}-${suffix}`:prefix;
 }
 function updateVariant(){
   const v=variantName();
@@ -171,6 +181,8 @@ function updateVariant(){
 }
 $('#c-go').onchange=updateVariant;
 $('#c-gemini').onchange=updateVariant;
+$('#c-codex').onchange=updateVariant;
+$('#c-claude').onchange=updateVariant;
 
 $('#go').onclick=grant;
 $('#pw').addEventListener('keydown',e=>{if(e.key==='Enter')grant()});

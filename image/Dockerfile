@@ -117,13 +117,24 @@ RUN chmod 755 /usr/local/bin/update-ai-clis /usr/local/bin/write-versions \
     chmod 644 /etc/systemd/system/ai-cli-update.service /etc/systemd/system/ai-cli-update.timer && \
     systemctl enable ai-cli-update.timer && \
     echo "refresh=${CLI_REFRESH}" && \
-    TOOLS="codex claude gh" /usr/local/bin/update-ai-clis && \
-    codex --version && claude --version
+    TOOLS=gh /usr/local/bin/update-ai-clis && gh --version
 
 # --- optional components -------------------------------------------------
 # These are deliberately the last layers in the image. Everything above is
-# shared by every variant, so a registry stores the expensive codex/claude
-# blobs once no matter how many combinations are published.
+# shared by every variant. Each omitted tool also stays omitted when the daily
+# updater runs inside a VM.
+
+# Codex native binary.
+ARG WITH_CODEX=1
+RUN if [ "$WITH_CODEX" = "1" ]; then \
+      INSTALL_MISSING=1 TOOLS=codex /usr/local/bin/update-ai-clis && codex --version ; \
+    else echo "skipping codex cli" ; fi
+
+# Claude Code native binary.
+ARG WITH_CLAUDE=1
+RUN if [ "$WITH_CLAUDE" = "1" ]; then \
+      INSTALL_MISSING=1 TOOLS=claude /usr/local/bin/update-ai-clis && claude --version ; \
+    else echo "skipping claude code" ; fi
 
 # Gemini CLI (~100MB of node_modules).
 ARG WITH_GEMINI=0

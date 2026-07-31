@@ -47,6 +47,8 @@ have gemini && agents+="- \`gemini\` $(gemini --version 2>/dev/null | head -1) (
 # agent may waste a turn discovering that `go` is missing, or worse, assume the
 # command failed for some other reason.
 missing=""
+have codex  || missing+="\`codex\` (OpenAI Codex CLI), "
+have claude || missing+="\`claude\` (Claude Code), "
 have go     || missing+="\`go\` (Go toolchain), "
 have gemini || missing+="\`gemini\` (Gemini CLI), "
 missing=${missing%, }

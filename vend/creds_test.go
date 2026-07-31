@@ -287,7 +287,7 @@ func TestLoginCommandsAreHeadless(t *testing.T) {
 }
 
 // The admin terminal exists to log the CLIs in, so it must run an image that
-// actually contains all of them. The lean default variant does not.
+// actually contains all of them. The default variant omits Go and Gemini.
 func TestTerminalUsesTheFullestVariant(t *testing.T) {
 	b, err := os.ReadFile("admin.go")
 	if err != nil {
@@ -396,28 +396,40 @@ func TestUpdaterIsFaultTolerant(t *testing.T) {
 // the Dockerfile build args; a mismatch means the wrong image gets vended.
 func TestVariantFor(t *testing.T) {
 	for _, tc := range []struct {
-		withGo, withGemini bool
-		want               string
+		codex, claude, goTool, gemini bool
+		want                          string
 	}{
-		{false, false, "min"},
-		{false, true, "gemini"},
-		{true, false, "go"},
-		{true, true, "go-gemini"},
+		{false, false, false, false, "core"},
+		{false, false, false, true, "core-gemini"},
+		{false, false, true, false, "core-go"},
+		{false, false, true, true, "core-go-gemini"},
+		{true, false, false, false, "codex"},
+		{true, false, false, true, "codex-gemini"},
+		{true, false, true, false, "codex-go"},
+		{true, false, true, true, "codex-go-gemini"},
+		{false, true, false, false, "claude"},
+		{false, true, false, true, "claude-gemini"},
+		{false, true, true, false, "claude-go"},
+		{false, true, true, true, "claude-go-gemini"},
+		{true, true, false, false, "min"},
+		{true, true, false, true, "gemini"},
+		{true, true, true, false, "go"},
+		{true, true, true, true, "go-gemini"},
 	} {
-		if got := variantFor(tc.withGo, tc.withGemini); got != tc.want {
-			t.Errorf("variantFor(go=%v,gemini=%v) = %q, want %q",
-				tc.withGo, tc.withGemini, got, tc.want)
+		if got := variantFor(tc.codex, tc.claude, tc.goTool, tc.gemini); got != tc.want {
+			t.Errorf("variantFor(codex=%v,claude=%v,go=%v,gemini=%v) = %q, want %q",
+				tc.codex, tc.claude, tc.goTool, tc.gemini, got, tc.want)
 		}
 	}
 
-	// The smallest image must be what you get when you ask for nothing, since
-	// an empty JSON body decodes to all-false.
+	// A cached/older client omits Codex and Claude fields. Preserve the old
+	// default rather than unexpectedly vending a tool-less core image.
 	var req grantReq
 	if err := json.Unmarshal([]byte(`{"repo":"exe-image-forge/dev"}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	if v := variantFor(req.WithGo, req.WithGemini); v != "min" {
-		t.Errorf("a request that omits the toggles yields %q, want the minimal image", v)
+	if v := variantFor(defaultTrue(req.WithCodex), defaultTrue(req.WithClaude), req.WithGo, req.WithGemini); v != "min" {
+		t.Errorf("a legacy request that omits new toggles yields %q, want min", v)
 	}
 
 	// Every variant the server can produce must be one the build script knows
@@ -427,12 +439,12 @@ func TestVariantFor(t *testing.T) {
 		t.Skipf("exe-image-forge not readable: %v", err)
 	}
 	for _, name := range variantNames {
-		if !strings.Contains(string(script), name+")") {
-			t.Errorf("variant %q has no case in exe-image-forge's variant_args", name)
+		if !strings.Contains(string(script), name) {
+			t.Errorf("variant %q is absent from exe-image-forge", name)
 		}
 	}
-	for _, combo := range [][2]bool{{false, false}, {false, true}, {true, false}, {true, true}} {
-		v := variantFor(combo[0], combo[1])
+	for mask := 0; mask < 16; mask++ {
+		v := variantFor(mask&1 != 0, mask&2 != 0, mask&4 != 0, mask&8 != 0)
 		found := false
 		for _, n := range variantNames {
 			if n == v {
@@ -441,6 +453,27 @@ func TestVariantFor(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("variantFor produced %q, which is not in variantNames", v)
+		}
+	}
+}
+
+func TestWebPickerSendsOptionalAgentChoices(t *testing.T) {
+	b, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	for _, tool := range []string{"codex", "claude", "gemini", "go"} {
+		if !strings.Contains(src, `id="c-`+tool+`"`) {
+			t.Errorf("web picker has no %s checkbox", tool)
+		}
+		if !strings.Contains(src, "with_"+tool+":") {
+			t.Errorf("grant request does not send with_%s", tool)
+		}
+	}
+	for _, tool := range []string{"codex", "claude"} {
+		if !strings.Contains(src, `id="c-`+tool+`" checked`) {
+			t.Errorf("%s should remain selected by default for backward compatibility", tool)
 		}
 	}
 }
@@ -454,22 +487,27 @@ func TestOptionalComponentsAreLastLayers(t *testing.T) {
 		t.Skipf("Dockerfile not readable: %v", err)
 	}
 	df := string(b)
-	cli := strings.Index(df, "TOOLS=\"codex claude gh\"")
-	if cli < 0 {
-		t.Fatal("could not find the AI CLI install step")
+	base := strings.Index(df, "TOOLS=gh")
+	if base < 0 {
+		t.Fatal("could not find the shared base CLI install step")
 	}
-	for _, arg := range []string{"ARG WITH_GEMINI", "ARG WITH_GO"} {
+	for _, arg := range []string{"ARG WITH_CODEX", "ARG WITH_CLAUDE", "ARG WITH_GEMINI", "ARG WITH_GO"} {
 		i := strings.Index(df, arg)
 		if i < 0 {
 			t.Errorf("%s missing from Dockerfile", arg)
 			continue
 		}
-		if i < cli {
-			t.Errorf("%s appears before the expensive CLI layer; every variant "+
-				"would duplicate codex+claude instead of sharing them", arg)
+		if i < base {
+			t.Errorf("%s appears before the shared base layer", arg)
 		}
 	}
 	// Defaults in the Dockerfile must match the defaults the web form sends.
+	if !strings.Contains(df, "ARG WITH_CODEX=1") {
+		t.Error("WITH_CODEX should default to 1 for backward compatibility")
+	}
+	if !strings.Contains(df, "ARG WITH_CLAUDE=1") {
+		t.Error("WITH_CLAUDE should default to 1 for backward compatibility")
+	}
 	if !strings.Contains(df, "ARG WITH_GO=0") {
 		t.Error("WITH_GO should default to 0 to match the web form's default")
 	}
@@ -478,16 +516,27 @@ func TestOptionalComponentsAreLastLayers(t *testing.T) {
 	}
 }
 
-// An image built without gemini must not have it reinstated by the update
-// timer, or the user's choice of a smaller image would silently expire.
+// An image built without an optional CLI must not have it reinstated by the
+// update timer, or the user's smaller-image choice would silently expire.
 func TestUpdaterDoesNotReinstateOmittedComponents(t *testing.T) {
 	b, err := os.ReadFile("../image/files/update-ai-clis")
 	if err != nil {
 		t.Skipf("update script not readable: %v", err)
 	}
-	if !strings.Contains(string(b), "INSTALL_MISSING") {
-		t.Error("update_gemini has no guard against installing into an image " +
-			"that deliberately excluded it")
+	src := string(b)
+	for _, tool := range []string{"codex", "claude", "gemini"} {
+		start := strings.Index(src, "update_"+tool+"(){")
+		if start < 0 {
+			t.Fatalf("update_%s not found", tool)
+		}
+		body := src[start:]
+		if end := strings.Index(body, "\n}"); end >= 0 {
+			body = body[:end]
+		}
+		if !strings.Contains(body, "INSTALL_MISSING") ||
+			!strings.Contains(body, "command -v "+tool) {
+			t.Errorf("update_%s can reinstate a deliberately omitted tool", tool)
+		}
 	}
 }
 
@@ -517,9 +566,8 @@ func TestAgentContextTargetsTheDocumentedGlobalPaths(t *testing.T) {
 			"destroy anything the user added to these files")
 	}
 
-	// Optional components must be reported conditionally. A static list would
-	// claim go/gemini exist in the min variant.
-	for _, guard := range []string{"have go ", "have gemini "} {
+	// Optional components must be reported conditionally.
+	for _, guard := range []string{"have codex ", "have claude ", "have go ", "have gemini "} {
 		if !strings.Contains(src, guard) {
 			t.Errorf("no presence check %q; the context would lie about lean variants", guard)
 		}

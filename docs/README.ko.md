@@ -158,30 +158,25 @@ base 를 다시 빌드하고 (자격증명이 있으면) dev 를 다시 굽습�
 
 ## 이미지 구성 (variant)
 
-무거운 선택 항목은 **홈 화면에서 이미지를 요청할 때** 체크박스로 고릅니다. 둘 다 기본은 **꺼짐**입니다.
+홈 화면에서 Codex, Claude, Gemini, Go를 각각 체크해 고릅니다. gh, node/npm/npx,
+python, uv/uvx, git, build-essential은 항상 포함됩니다. 기존 사용 흐름을 유지하기 위해
+Codex와 Claude는 기본 체크 상태입니다.
 
-| 구성 | 태그 | 다운로드 | 추가 |
-|---|---|---|---|
-| 최소 (기본) | `min` | 497MB | — |
-| + Gemini CLI | `gemini` | 517MB | +21MB |
-| + Go 툴체인 | `go` | 559MB | +62MB |
-| + 둘 다 | `go-gemini` | 580MB | +83MB |
+| 에이전트 선택 | 태그 prefix/기본 태그 |
+|---|---|
+| Codex·Claude 모두 제외 | `core` |
+| Codex만 | `codex` |
+| Claude만 | `claude` |
+| Codex + Claude | `min` (기존 호환 이름) |
 
-항상 포함: codex · claude · gh · node/npm/npx · python · uv/uvx · git · build-essential.
+Gemini와 Go 선택에 따라 `-gemini`, `-go`, `-go-gemini`가 붙습니다. 단 기존 태그인
+`gemini`, `go`, `go-gemini`는 예전과 같이 Codex + Claude를 포함합니다. 모두 16개 조합입니다.
 
-네 구성 모두 미리 빌드해 두고, 요청 시 해당 variant 를 토큰 경로로 발급합니다.
-**선택 항목은 Dockerfile 의 마지막 레이어**라서 네 구성이 그 아래 레이어(codex+claude 587MB 포함)를
-전부 공유합니다 — 레지스트리에 이 blob 이 한 번만 저장됩니다. 순진하게 앞쪽에 뒀다면 구성마다
-587MB 를 중복 저장했을 겁니다. 이 순서는 테스트로 고정해 뒀습니다.
-
-표의 크기는 **압축 크기**(= 레지스트리 매니페스트의 레이어 합계 = 실제 `docker pull` 전송량)입니다.
-`docker images` 가 보여주는 2.1GB 는 압축을 푼 뒤의 디스크 사용량입니다.
-
-`min` 이미지에서는 업데이트 타이머가 gemini 를 **되살리지 않습니다**. 작은 이미지를 고른 선택이
-첫 부팅 때 조용히 뒤집히면 안 되기 때문입니다.
+제외한 Codex, Claude, Gemini는 부팅 후 자동 업데이트 타이머가 다시 설치하지 않습니다.
+사용자의 작은 이미지 선택이 첫 부팅 때 조용히 뒤집히지 않도록 테스트로 고정돼 있습니다.
 
 ```
-exe-image-forge build [--fresh] [variant]   네 구성 모두(또는 하나만) 빌드
+exe-image-forge build [--fresh] [variant]   16개 구성 모두(또는 하나만) 빌드
 exe-image-forge bake [variant]              자격증명을 각 구성 위에 굽기
 exe-image-forge sizes                       구성별 크기
 exe-image-forge versions [image]            구성별 도구 버전
@@ -204,7 +199,7 @@ exe-image-forge versions [image]            구성별 도구 버전
 
 설계상 중요한 점 두 가지:
 
-**구성별로 내용이 다릅니다.** `min` 이미지의 지침에는 Go 와 Gemini 가 "설치되지 않음" 으로
+**구성별로 내용이 다릅니다.** 각 이미지의 지침에는 제외한 Codex, Claude, Go, Gemini가 "설치되지 않음" 으로
 명시되고, 손으로 설치하지 말고 해당 구성 이미지를 요청하라고 안내합니다. 정적인 목록을 넣었다면
 에이전트가 없는 도구를 있다고 믿고 계획을 세웠을 겁니다.
 

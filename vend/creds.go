@@ -285,8 +285,7 @@ func (s *server) toolVersions() map[string]string {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	// Read from the fullest variant so every optional tool reports a version;
-	// the leaner variants share these binaries, they just omit some.
+	// Read from the fullest variant so every optional tool reports a version.
 	base := imageRepo(img)
 	var out []byte
 	var err error
@@ -317,9 +316,14 @@ type variantInfo struct {
 	Size  string `json:"size,omitempty"`
 }
 
-// Variants are ordered smallest-first; the names match the image tags and the
-// WITH_* build args in the Dockerfile.
-var variantNames = []string{"min", "gemini", "go", "go-gemini"}
+// The four historical names mean Codex + Claude and are retained for backward
+// compatibility. core/codex/claude prefixes describe the other agent sets.
+var variantNames = []string{
+	"core", "core-gemini", "core-go", "core-go-gemini",
+	"codex", "codex-gemini", "codex-go", "codex-go-gemini",
+	"claude", "claude-gemini", "claude-go", "claude-go-gemini",
+	"min", "gemini", "go", "go-gemini",
+}
 
 func humanSize(b int64) string {
 	const u = 1024
