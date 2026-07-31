@@ -265,12 +265,21 @@ EOF
 cmd_verify(){
   local img=${1:-$DEV}
   log "verifying $img"
-  docker run --rm -u 1000:1000 -e HOME=/home/exedev "$img" bash -lc '
+  # Optional components are absent from the lean variants by design, so report
+  # them rather than emitting a command-not-found that looks like a failure.
+  docker run --rm -u 1000:1000 -e HOME=/home/exedev --entrypoint bash "$img" -lc '
     set +e
-    echo "-- versions"; node -v; python3 -V; go version|cut -d" " -f3; uv --version; gh --version|head -1
-    codex --version; claude --version; gemini --version
-    echo "-- auth"; gh auth status 2>&1|head -5; codex login status 2>&1|head -3
-    ls -la ~/.claude/.credentials.json ~/.gemini/oauth_creds.json 2>&1'
+    echo "-- versions"
+    node -v; python3 -V; uv --version; gh --version|head -1
+    codex --version; claude --version
+    if command -v go     >/dev/null; then go version|cut -d" " -f3; else echo "go: not in this variant"; fi
+    if command -v gemini >/dev/null; then gemini --version;         else echo "gemini: not in this variant"; fi
+    echo "-- auth"
+    gh auth status 2>&1|sed -n 2,3p
+    codex login status 2>&1|head -1
+    claude auth status --text 2>&1|head -1
+    if [ -s ~/.gemini/gemini-credentials.json ] || [ -s ~/.gemini/oauth_creds.json ] \
+       || [ -n "${GEMINI_API_KEY:-}" ]; then echo "gemini: logged in"; else echo "gemini: NOT logged in"; fi'
 }
 
 cmd_import(){
