@@ -1,6 +1,6 @@
 # exe-image-forge base image: slim, exeuntu-compatible dev image.
 # Derived in part from https://github.com/boldsoftware/exeuntu (Apache-2.0).
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
 
