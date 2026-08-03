@@ -117,7 +117,8 @@ RUN chmod 755 /usr/local/bin/update-ai-clis /usr/local/bin/write-versions \
     chmod 644 /etc/systemd/system/ai-cli-update.service /etc/systemd/system/ai-cli-update.timer && \
     systemctl enable ai-cli-update.timer && \
     echo "refresh=${CLI_REFRESH}" && \
-    TOOLS=gh /usr/local/bin/update-ai-clis && gh --version
+    INSTALL_MISSING=1 TOOLS="gh wrangler" /usr/local/bin/update-ai-clis && \
+    gh --version && wrangler --version
 
 # --- optional components -------------------------------------------------
 # These are deliberately the last layers in the image. Everything above is

@@ -13,6 +13,7 @@ cat > /etc/ai-cli-versions.json <<JSON
   "codex": "$(opt codex --version)",
   "claude": "$(opt claude --version)",
   "gemini": "$(opt gemini --version)",
+  "wrangler": "$(opt wrangler --version)",
   "gh": "$(opt gh --version)",
   "node": "$(opt node --version)",
   "python": "$(opt python3 --version)",

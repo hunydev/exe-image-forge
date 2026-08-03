@@ -80,3 +80,8 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
+      - name: Enforce compressed image size budget
+        if: steps.mode.outputs.push == 'true'
+        run: ./scripts/check-appliance-size.sh "${IMAGE}@${DIGEST}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}

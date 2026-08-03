@@ -1333,7 +1333,7 @@ func (s *server) repoInfo() []map[string]any {
 		baked := strings.HasSuffix(r, "/dev")
 		label, note := r+" (no credentials)", "Tools only; sign in manually"
 		if baked {
-			label, note = r+" (signed in)", "Includes Codex, Claude, Gemini, and GitHub credentials"
+			label, note = r+" (signed in)", "Includes Codex, Claude, Gemini, GitHub, and Cloudflare credentials"
 		}
 		out = append(out, map[string]any{
 			"name": r, "label": label, "note": note, "baked": baked,

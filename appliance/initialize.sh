@@ -57,6 +57,7 @@ install -d -m0755 "$ETC_DIR"
 install -d -m0700 "$DATA_DIR" "$DATA_DIR/authhome" "$DATA_DIR/registry"
 install -d -m0700 \
   "$DATA_DIR/authhome/.config/gh" \
+  "$DATA_DIR/authhome/.config/.wrangler/config" \
   "$DATA_DIR/authhome/.codex" \
   "$DATA_DIR/authhome/.claude" \
   "$DATA_DIR/authhome/.gemini"

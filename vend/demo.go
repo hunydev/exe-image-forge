@@ -58,6 +58,12 @@ func demoCredentials() []Cred {
 			LoginCmd: "gh auth login --git-protocol https",
 		},
 		{
+			Tool: "wrangler", Name: "Cloudflare Wrangler",
+			File: ".config/.wrangler/config/default.toml", State: "ok", Refreshable: true,
+			Detail: "Demo Cloudflare OAuth", LoginCmd: "wrangler login --no-use-keyring",
+			NeedsRelay: true,
+		},
+		{
 			Tool: "codex", Name: "Codex CLI", File: ".codex/auth.json",
 			State: "ok", Expires: expiry, SecondsLeft: seconds, Refreshable: true,
 			Detail: "Demo ChatGPT sign-in", LoginCmd: "codex login --device-auth",
@@ -87,15 +93,16 @@ func demoVariants() map[string]variantInfo {
 
 func demoToolVersions() map[string]string {
 	return map[string]string{
-		"updated": "2026-01-15T12:00:00Z",
-		"gh":      "2.85.0",
-		"node":    "24.0.0",
-		"python":  "3.12.3",
-		"uv":      "0.9.0",
-		"codex":   "0.110.0",
-		"claude":  "2.1.0",
-		"gemini":  "0.60.0",
-		"go":      "1.25.0",
+		"updated":  "2026-01-15T12:00:00Z",
+		"gh":       "2.85.0",
+		"node":     "24.0.0",
+		"python":   "3.12.3",
+		"uv":       "0.9.0",
+		"codex":    "0.110.0",
+		"claude":   "2.1.0",
+		"gemini":   "0.60.0",
+		"wrangler": "4.33.1",
+		"go":       "1.25.0",
 	}
 }
 

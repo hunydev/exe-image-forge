@@ -301,6 +301,8 @@ func hostAuthCommand(tool string) (hostAuthSpec, bool) {
 		return hostAuthSpec{command: "claude", args: []string{"auth", "login"}}, true
 	case "gemini":
 		return hostAuthSpec{command: "gemini", env: []string{"NO_BROWSER=true"}}, true
+	case "wrangler":
+		return hostAuthSpec{command: "wrangler", args: []string{"login", "--no-use-keyring"}}, true
 	default:
 		return hostAuthSpec{}, false
 	}
@@ -467,11 +469,10 @@ func (a *admin) handleTerm(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRelay replays an OAuth callback URL that the user's browser could not
-// reach. Gemini CLI (unlike codex --device-auth and claude auth login) may have no
-// device flow: it spawns a throwaway HTTP listener on a random localhost port
-// and waits for Google to redirect there. That redirect lands on the user's
-// laptop, not this VM, so it always fails. The user pastes the dead URL here
-// and we issue the request from inside the VM, where the listener actually is.
+// reach. Wrangler uses localhost:8976, and older Gemini flows can use a random
+// local port. Those redirects land on the user's laptop, not this VM. The user
+// pastes the dead URL here and we issue the request from inside the VM, where
+// the waiting CLI listener actually is.
 func (a *admin) handleRelay(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "POST only", 405)

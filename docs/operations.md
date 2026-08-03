@@ -48,7 +48,8 @@ access, bake controls, or image-grant controls.
 ## CLI authentication
 
 The browser terminal is a real PTY running in the full
-`base:go-gemini` image with the persistent authentication home mounted. Only
+`base:go-gemini` image with the persistent authentication home mounted.
+Wrangler is present in every variant. Only
 one terminal may run at a time to prevent credential-file races.
 
 The release appliance uses a second backend, `auth-host`, so login works before
@@ -63,16 +64,17 @@ shell. See the [appliance guide](appliance.md).
 | Codex CLI | `codex login --device-auth` | device code |
 | Claude Code | `claude auth login` | redirect and pasted code |
 | Gemini CLI | `NO_BROWSER=true gemini` | redirect and pasted code |
+| Cloudflare Wrangler | `wrangler login --no-use-keyring` | browser OAuth plus localhost relay |
 
 Do not use `claude setup-token` for image authentication. It prints a token for
 an environment variable but does not persist the credential file that the bake
 workflow needs.
 
-`NO_BROWSER=true` normally keeps Gemini away from a localhost callback. The
-admin relay is retained as a fallback for a CLI version that still redirects to
-`http://localhost:<port>/oauth2callback?...`. It accepts only localhost or
-127.0.0.1 on non-privileged ports, preventing the endpoint from becoming an
-authenticated SSRF primitive.
+`NO_BROWSER=true` normally keeps Gemini away from a localhost callback.
+Wrangler always redirects to `http://localhost:8976`; copy the complete failed
+browser URL into the admin relay while `wrangler login` is waiting. The relay
+accepts only localhost or 127.0.0.1 on non-privileged ports, preventing the
+endpoint from becoming an authenticated SSRF primitive.
 
 ## CLI workflow
 
@@ -100,7 +102,7 @@ The command prints an allowlisted tar workflow for importing them.
 | Command | Purpose |
 | --- | --- |
 | `exe-image-forge build [--fresh] [variant]` | Build all base variants or one variant |
-| `exe-image-forge auth {gh\|codex\|claude\|gemini\|all}` | Authenticate inside the full image |
+| `exe-image-forge auth {gh\|codex\|claude\|gemini\|wrangler\|all}` | Authenticate inside the full image |
 | `exe-image-forge import [file]` | Import a credential tar, stdin by default |
 | `exe-image-forge export-hint` | Print the credential export command |
 | `exe-image-forge shell` | Open an interactive shell with persistent HOME |
@@ -118,7 +120,8 @@ The command prints an allowlisted tar workflow for importing them.
 
 ## Image variants
 
-GitHub CLI, Node.js, Python, uv, Git, and build-essential are always present.
+GitHub CLI, Cloudflare Wrangler, Node.js, Python, uv, Git, and build-essential
+are always present.
 Codex, Claude, Gemini, and Go are independently selectable.
 
 | Codex/Claude selection | Tag base |
@@ -140,11 +143,11 @@ Current reference sizes with zstd level 9:
 
 | Variant | Compressed size |
 | --- | ---: |
-| `core` | 241 MB |
-| `codex` | 330 MB |
-| `claude` | 309 MB |
-| `min` | 398 MB |
-| `go-gemini` | 463 MB |
+| `core` | 291 MB |
+| `codex` | 380 MB |
+| `claude` | 359 MB |
+| `min` | 448 MB |
+| `go-gemini` | 514 MB |
 
 Actual sizes change as upstream tools release new versions. Use
 `exe-image-forge sizes` for the authoritative local values.
@@ -178,6 +181,11 @@ username. Before baking, `image/files/gemini-export-creds.js` converts a
 credential on the login host into a portable OAuth file or an image
 `GEMINI_API_KEY` environment value.
 
+Wrangler is invoked with `--no-use-keyring`, so its OAuth access and refresh
+tokens remain in the allowlisted
+`~/.config/.wrangler/config/default.toml`. An encrypted `default.enc` without
+its host keyring is deliberately reported as non-portable and is not baked.
+
 ## Agent context
 
 At boot, `agent-context.service` writes current machine and tool information to:
@@ -202,7 +210,8 @@ There are two update layers:
 - On the forge VM, `exe-image-forge-refresh.timer` rebuilds base images weekly
   and re-bakes dev images when credentials exist.
 
-Each tool updates independently. A failed network request for one CLI does not
+Each tool, including the global Wrangler bootstrap CLI, updates independently.
+A failed network request for one CLI does not
 block the others. New binaries are version-checked before replacement, and the
 result is written to `/etc/ai-cli-versions.json`.
 

@@ -20,7 +20,7 @@ fi
 cat <<'EOF'
 
 The web starts immediately. Base image variants build in the background.
-Use Admin > CLI Logins to authenticate GitHub, Codex, Claude, and Gemini.
+Use Admin > CLI Logins to authenticate GitHub, Codex, Claude, Gemini, and Cloudflare.
 
 Useful status commands:
   systemctl status exe-image-forge-vend.service --no-pager

@@ -59,6 +59,7 @@ jobs:
             systemctl is-active --quiet exe-image-forge-initialize.service
           docker exec exe-image-forge-smoke \
             systemctl is-active --quiet exe-image-forge-vend.service
+          docker exec exe-image-forge-smoke wrangler --version | grep -E '^4\.'
 
           for _ in $(seq 1 180); do
             if docker exec exe-image-forge-smoke \

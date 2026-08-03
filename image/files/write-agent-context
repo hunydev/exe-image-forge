@@ -35,6 +35,7 @@ have python3 && add "$(python3 --version 2>/dev/null) — \`python3\`/\`python\`
 have uv      && add "uv $(uv --version 2>/dev/null | awk '{print $2}') — \`uv\`, \`uvx\` (fast Python package/tool runner)"
 have go      && add "Go $(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//') — \`go\`, \`gofmt\`"
 have gh      && add "GitHub CLI $(gh --version 2>/dev/null | head -1 | awk '{print $3}') — \`gh\` (pre-authenticated)"
+have wrangler && add "Cloudflare Wrangler $(wrangler --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) — \`wrangler\` (pre-authenticated when baked)"
 have git     && add "git $(git --version 2>/dev/null | awk '{print $3}')"
 have gcc     && add "build-essential — \`gcc\`, \`g++\`, \`make\`, \`pkg-config\` (cgo and native npm modules work)"
 have docker  && add "Docker — \`docker\`"
@@ -98,14 +99,16 @@ plain HTTP and no arbitrary TCP.
 Because of that, **OAuth flows that redirect to \`http://localhost:<port>\` do not
 work from a browser on another machine.** Prefer the headless variants:
 \`codex login --device-auth\`, \`claude auth login\`, and \`gh auth login\`
-(device-code or pasted-code flows).
+(device-code or pasted-code flows). Wrangler OAuth redirects to
+\`localhost:8976\`; use Exe Image Forge's callback relay after
+\`wrangler login --no-use-keyring\` on a remote VM.
 
 ### Conventions
 MD
 
 if [ "$credentialed" = 1 ]; then
 cat <<MD
-- Credentials for the AI CLIs and \`gh\` are baked in — do not re-authenticate
+- Credentials for the AI CLIs, \`gh\`, and Wrangler are baked in — do not re-authenticate
   unless a command reports an expired token.
 MD
 else

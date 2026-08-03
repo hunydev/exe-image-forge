@@ -113,10 +113,16 @@ command:
 | Codex | `codex login --device-auth` |
 | Claude | `claude auth login` |
 | Gemini | `NO_BROWSER=true gemini` |
+| Cloudflare | `wrangler login --no-use-keyring` |
 
 No browser-supplied shell text, executable, or argument is accepted.
 Credentials are written to `/var/lib/exe-image-forge/authhome` and can later be
 baked through the existing allowlist.
+
+Wrangler's OAuth provider returns to `http://localhost:8976`. On a remote VM,
+leave the terminal waiting, copy the complete failed browser URL, and paste it
+into the **OAuth callback relay** below the terminal. The relay permits only
+loopback callback addresses and sends the request from the appliance.
 
 ## Persistent and replaceable data
 
@@ -142,8 +148,11 @@ manifest digest in the workflow summary.
 After a successful release, `.github/workflows/appliance-smoke.yml` pulls the
 public image and boots it as a privileged PID 1/systemd container. The smoke
 test checks first-boot initialization, Docker-backed registry startup, port
-8000 health, restricted authentication mode, and the absence of protected
+8000 health, Wrangler availability, restricted authentication mode, and the absence of protected
 credential metadata from unauthenticated responses.
 
-The appliance is based on a pinned multi-platform exeuntu manifest. Updating
-that digest should be reviewed like any other operating-system dependency.
+The appliance is built directly on a pinned Ubuntu 24.04 multi-platform
+manifest and carries only Forge's boot/runtime dependencies. The previous
+general-purpose exeuntu base transferred 1.54 GiB for AMD64, including tools
+that the appliance never used. Releases now enforce a 768 MiB compressed budget
+for both AMD64 and ARM64; generated development images remain separate.

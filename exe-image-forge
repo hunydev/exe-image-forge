@@ -66,6 +66,7 @@ VARIANTS=(
 CRED_FILES=(
   .config/gh/hosts.yml
   .config/gh/config.yml
+  .config/.wrangler/config/default.toml
   .codex/auth.json
   .codex/config.toml
   .claude/.credentials.json
@@ -184,10 +185,9 @@ cmd_auth(){
   docker image inspect "$img" >/dev/null 2>&1 || img="$BASE"
   local run=(docker run --rm -it --network host -e HOME=/home/exedev -u 1000:1000
              -v "$AUTHHOME":/home/exedev -w /home/exedev "$img")
-  # All of these avoid a localhost OAuth callback, which would land on the
-  # user's laptop rather than this VM. gh and codex use device codes; claude
-  # auth login redirects to platform.claude.com and prints a code to paste;
-  # gemini with NO_BROWSER=true redirects to codeassist.google.com/authcode.
+  # gh and codex use device codes; Claude and headless Gemini accept a pasted
+  # code. Wrangler always returns to localhost:8976, so the web/CLI relay must
+  # replay the browser's final callback while the command is still waiting.
   case "$tool" in
     gh)     "${run[@]}" gh auth login --git-protocol https "$@" ;;
     codex)  "${run[@]}" codex login --device-auth "$@" ;;
@@ -206,8 +206,20 @@ that port is here on the VM, not on your laptop. Copy that dead URL and run:
   exe-image-forge relay '<paste the whole localhost URL>'
 EOF
       "${run[@]}" env NO_BROWSER=true gemini "$@" ;;
-    all)    for t in gh codex claude gemini; do cmd_auth "$t"; done ;;
-    *) die "usage: exe-image-forge auth {gh|codex|claude|gemini|all}" ;;
+    wrangler)
+      cat <<'EOF'
+Wrangler redirects to http://localhost:8976 after browser authorization.
+That URL is on the VM, not your laptop. Leave this command waiting, copy the
+complete failed localhost URL from the browser, and relay it from another
+terminal or from Admin > Logins:
+
+  exe-image-forge relay '<paste the whole localhost URL>'
+
+--no-use-keyring keeps the OAuth refresh token portable for credential baking.
+EOF
+      "${run[@]}" wrangler login --no-use-keyring "$@" ;;
+    all)    for t in gh codex claude gemini wrangler; do cmd_auth "$t"; done ;;
+    *) die "usage: exe-image-forge auth {gh|codex|claude|gemini|wrangler|all}" ;;
   esac
 }
 
@@ -215,7 +227,8 @@ cmd_status(){
   ensure_authhome
   echo "auth home: $AUTHHOME"
   for f in .config/gh/hosts.yml .codex/auth.json .claude/.credentials.json .claude.json \
-           .gemini/gemini-credentials.json .gemini/google_accounts.json; do
+           .gemini/gemini-credentials.json .gemini/google_accounts.json \
+           .config/.wrangler/config/default.toml; do
     if sudo test -s "$AUTHHOME/$f"; then printf '  \033[32m✓\033[0m %s\n' "$f"; else printf '  \033[31m✗\033[0m %s\n' "$f"; fi
   done
   echo
@@ -231,6 +244,7 @@ cmd_status(){
         acct=$(grep -oE "[A-Za-z0-9._%%+-]+@[A-Za-z0-9.-]+" ~/.gemini/google_accounts.json 2>/dev/null | head -1)
         echo "   logged in${acct:+ ($acct)}"
       else echo "   not logged in"; fi
+      echo "-- wrangler:"; wrangler whoami 2>&1|sed "s/^/   /"
     ' || true
 }
 
@@ -323,8 +337,12 @@ EOF
           { [ -s ~/.gemini/gemini-credentials.json ] || [ -s ~/.gemini/oauth_creds.json ] \
             || [ -n "${GEMINI_API_KEY:-}" ]; } && echo auth:gemini
         fi
+        if command -v wrangler >/dev/null; then
+          echo present:wrangler
+          wrangler whoami >/dev/null 2>&1 && echo auth:wrangler
+        fi
       ' 2>/dev/null) || true
-    for t in gh codex claude gemini; do
+    for t in gh codex claude gemini wrangler; do
       if grep -qx "present:$t" <<<"$out"; then
         grep -qx "auth:$t" <<<"$out" || { warn "baked image: $t is NOT logged in"; bad=1; }
       else
@@ -349,6 +367,7 @@ cmd_verify(){
     if command -v claude >/dev/null; then claude --version; else echo "claude: not in this variant"; fi
     if command -v go     >/dev/null; then go version|cut -d" " -f3; else echo "go: not in this variant"; fi
     if command -v gemini >/dev/null; then gemini --version;         else echo "gemini: not in this variant"; fi
+    wrangler --version
     echo "-- auth"
     gh auth status 2>&1|sed -n 2,3p
     if command -v codex >/dev/null; then codex login status 2>&1|head -1; fi
@@ -356,7 +375,8 @@ cmd_verify(){
     if command -v gemini >/dev/null; then
       if [ -s ~/.gemini/gemini-credentials.json ] || [ -s ~/.gemini/oauth_creds.json ] \
          || [ -n "${GEMINI_API_KEY:-}" ]; then echo "gemini: logged in"; else echo "gemini: NOT logged in"; fi
-    fi'
+    fi
+    wrangler whoami 2>&1|sed -n "1,4p"'
 }
 
 cmd_import(){
@@ -383,7 +403,8 @@ Run this on the machine where you are already logged in, then pipe it here:
       .config/gh/hosts.yml \
       .codex/auth.json \
       .claude/.credentials.json .claude.json \
-      .gemini/oauth_creds.json .gemini/google_accounts.json 2>/dev/null \
+      .gemini/oauth_creds.json .gemini/google_accounts.json \
+      .config/.wrangler/config/default.toml 2>/dev/null \
     | ssh ${VM_NAME}.exe.xyz exe-image-forge import -
 
 Omit any file you do not have. Then: exe-image-forge bake
@@ -431,7 +452,7 @@ cmd_relay(){
   esac
   log "relaying to ${u%%\?*}"
   curl -sS --max-time 20 "$u" && echo
-  log "check the terminal running gemini for the result"
+  log "check the terminal running the OAuth login for the result"
 }
 
 cmd_password(){
@@ -447,7 +468,13 @@ cmd_password(){
 
 cmd_vend_build(){
   log "rebuilding vend service"
-  (cd "$ROOT/vend" && go build -o /tmp/vend .)
+  if command -v go >/dev/null 2>&1; then
+    (cd "$ROOT/vend" && go build -o /tmp/vend .)
+  else
+    log "Go is not installed on this slim appliance; using the pinned builder image"
+    docker run --rm -v "$ROOT/vend:/src:ro" -v /tmp:/out -w /src \
+      docker.io/library/golang:1.26.5-bookworm go build -o /out/vend .
+  fi
   sudo install -d -m0755 "$INSTALL_DIR"
   sudo install -m0755 /tmp/vend "$INSTALL_DIR/vend"
   sudo cp "$ROOT/deploy/exe-image-forge-vend.service" /etc/systemd/system/
@@ -475,7 +502,8 @@ cmd_refresh(){
   # Only re-bake if credentials exist; otherwise we would publish an image
   # that silently lost its logins.
   if [ -f "$AUTHHOME/.codex/auth.json" ] || [ -f "$AUTHHOME/.claude/.credentials.json" ] \
-     || [ -f "$AUTHHOME/.gemini/oauth_creds.json" ] || [ -f "$AUTHHOME/.config/gh/hosts.yml" ]; then
+     || [ -f "$AUTHHOME/.gemini/oauth_creds.json" ] || [ -f "$AUTHHOME/.config/gh/hosts.yml" ] \
+     || [ -f "$AUTHHOME/.config/.wrangler/config/default.toml" ]; then
     cmd_bake
   else
     log "no credentials in $AUTHHOME; skipping bake"
@@ -611,8 +639,8 @@ exe-image-forge - custom exe.dev image builder + time-limited image vending
   exe-image-forge refresh        update AI CLIs, rebuild base, re-bake dev (run by timer)
   exe-image-forge versions [img] show the tool versions baked into an image
   exe-image-forge context [var]  show the machine context the AI CLIs will read
-  exe-image-forge auth <tool>    log in inside the image: gh | codex | claude | gemini | all
-  exe-image-forge relay <url>    replay a gemini localhost OAuth callback from the VM
+  exe-image-forge auth <tool>    log in: gh | codex | claude | gemini | wrangler | all
+  exe-image-forge relay <url>    replay a localhost OAuth callback from the VM
   exe-image-forge import [file]  import credentials from a tar (stdin by default)
   exe-image-forge export-hint    print the command to run on your logged-in machine
   exe-image-forge shell          interactive shell in the image with the persistent auth HOME

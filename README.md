@@ -16,7 +16,7 @@ product.
 ## Features
 
 - Ubuntu 24.04 with systemd, configured for exe.dev custom images
-- GitHub CLI, Node.js, Python, and `uv` in every variant
+- GitHub CLI, Cloudflare Wrangler, Node.js, Python, and `uv` in every variant
 - Independently selectable Codex CLI, Claude Code, Gemini CLI, and Go
 - Separate logged-out `base` images and credentialed `dev` images
 - Persistent authentication state stored outside the Git checkout and images
@@ -70,7 +70,7 @@ ssh image-forge.exe.xyz exe-image-forge-first-login
 ```
 
 Sign in to the web, open **Admin > CLI Logins**, and authenticate GitHub,
-Codex, Claude, and Gemini. The browser can run only those fixed login commands;
+Codex, Claude, Gemini, and Cloudflare Wrangler. The browser can run only those fixed login commands;
 it is not a host shell. The 16 logged-out base variants build in the background,
 and the web remains available while they build:
 
@@ -160,7 +160,8 @@ exe-image-forge auth gh
 exe-image-forge auth codex
 exe-image-forge auth claude
 exe-image-forge auth gemini
-# Or run all four in sequence:
+exe-image-forge auth wrangler
+# Or run all five in sequence:
 exe-image-forge auth all
 ```
 
@@ -170,9 +171,10 @@ exe-image-forge auth all
 | Codex CLI | `codex login --device-auth` |
 | Claude Code | `claude auth login` with the returned code pasted into the terminal |
 | Gemini CLI | Browser-disabled OAuth with the returned code pasted into the terminal |
+| Cloudflare Wrangler | `wrangler login --no-use-keyring`, then relay the final localhost URL |
 
-If Gemini redirects to an unreachable localhost callback, use the relay helper
-shown by the CLI:
+Wrangler OAuth always redirects the browser to `localhost:8976`. Leave the
+login terminal open, copy that complete failed URL, and use the relay helper:
 
 ```bash
 exe-image-forge relay '<callback-url>'
@@ -187,8 +189,8 @@ exe-image-forge bake
 exe-image-forge verify
 ```
 
-The admin page provides the same login flows in a browser terminal and checks
-Codex, Claude, and Gemini credential sizes before baking. Source installations
+The admin page provides the same login flows in a browser terminal and tracks
+all five credential states before baking. Source installations
 run the terminal in the full base image. The release appliance instead runs
 one exact host login command at a time, allowing authentication before the
 background base build finishes. `base` images contain the tools but no login
@@ -196,7 +198,8 @@ state. Only the allowlisted credential files are copied into `dev` images.
 
 ## Image variants
 
-Codex, Claude, Gemini, and Go are independently selectable. The 16 combinations
+Wrangler is installed in every image. Codex, Claude, Gemini, and Go are
+independently selectable. The 16 combinations
 use these tag rules:
 
 | Agent selection | Tag prefix/base |
@@ -285,8 +288,8 @@ exe-image-forge sizes                       Show variant sizes
 exe-image-forge refresh                     Update CLIs, rebuild, and re-bake
 exe-image-forge versions [image]            Show versions baked into an image
 exe-image-forge context [variant]           Show the generated agent context
-exe-image-forge auth <tool>                 Log in: gh, codex, claude, gemini, all
-exe-image-forge relay <url>                 Replay a Gemini localhost callback
+exe-image-forge auth <tool>                 Log in: gh, codex, claude, gemini, wrangler, all
+exe-image-forge relay <url>                 Replay a localhost OAuth callback
 exe-image-forge import [file]               Import an authentication archive
 exe-image-forge export-hint                 Show the remote export command
 exe-image-forge shell                       Open a shell with persistent auth state

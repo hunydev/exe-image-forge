@@ -105,7 +105,7 @@ receive the aggregate count.
     {
       "name": "exe-image-forge/dev",
       "label": "exe-image-forge/dev (signed in)",
-      "note": "Includes Codex, Claude, Gemini, and GitHub credentials",
+      "note": "Includes Codex, Claude, Gemini, GitHub, and Cloudflare credentials",
       "baked": true
     }
   ],
@@ -254,7 +254,7 @@ Requires an active session and upgrades to a WebSocket. `cols` and `rows`
 provide the initial PTY size.
 
 In `auth-host` mode, `tool` is required and must be one of `gh`, `codex`,
-`claude`, or `gemini`. A missing or unknown value returns `400` before a
+`claude`, `gemini`, or `wrangler`. A missing or unknown value returns `400` before a
 WebSocket is accepted. The value selects a server-side fixed command; it is not
 an executable name or shell fragment.
 
@@ -325,7 +325,7 @@ Demo mode returns a non-executing echo terminal instead of starting Docker.
 
 ### `POST /admin/api/relay`
 
-Fallback for a Gemini localhost OAuth callback.
+Relay for Wrangler's localhost OAuth callback and older Gemini fallback flows.
 
 ```json
 {
@@ -333,8 +333,8 @@ Fallback for a Gemini localhost OAuth callback.
 }
 ```
 
-Only `localhost`, `127.0.0.1`, non-privileged ports, and the expected callback
-path are accepted.
+Only `localhost`, `127.0.0.1`, and non-privileged ports are accepted. The path
+and query are preserved for the waiting CLI.
 
 ### Passkey endpoints
 
@@ -361,7 +361,7 @@ Demo mode:
 - refuses non-loopback listen addresses
 - never reads real credentials
 - never builds or pushes an image
-- provides all 16 variants and four healthy credential fixtures
+- provides all 16 variants and five healthy credential fixtures
 - simulates grant publication and baking
 - marks API inventory with `"demo": true`
 

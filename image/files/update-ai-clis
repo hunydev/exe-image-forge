@@ -90,6 +90,25 @@ update_gemini(){
   say "gemini now $(gemini --version 2>/dev/null | head -1)"
 }
 
+# --- wrangler: npm global -------------------------------------------------
+# Cloudflare recommends a project-local Wrangler for application projects.
+# Forge also keeps one global copy as the bootstrap/authentication CLI so a
+# fresh VM can sign in before a project exists. A project's local dependency
+# still wins when it is invoked through `npx wrangler`.
+update_wrangler(){
+  local cur
+  if ! command -v wrangler >/dev/null 2>&1 && [ "${INSTALL_MISSING:-0}" != "1" ]; then
+    say "wrangler not installed in this image; skipping"
+    return 0
+  fi
+  cur=$(wrangler --version 2>/dev/null | head -1 || true)
+  say "wrangler ${cur:-none} -> checking"
+  npm install -g wrangler@latest >/dev/null 2>&1 \
+    || { warn "wrangler: npm install failed"; return 1; }
+  npm cache clean --force >/dev/null 2>&1 || true
+  say "wrangler now $(wrangler --version 2>/dev/null | head -1)"
+}
+
 # --- gh: apt --------------------------------------------------------------
 update_gh(){
   say "gh $(gh --version 2>/dev/null | head -1 | grep -oE '[0-9.]+' | head -1) -> checking"
@@ -100,13 +119,14 @@ update_gh(){
   rm -rf /var/lib/apt/lists/*
 }
 
-only="${TOOLS:-codex claude gemini gh}"
+only="${TOOLS:-codex claude gemini gh wrangler}"
 for t in $only; do
   case "$t" in
     codex)  update_codex  || rc=1 ;;
     claude) update_claude || rc=1 ;;
     gemini) update_gemini || rc=1 ;;
     gh)     update_gh     || rc=1 ;;
+    wrangler) update_wrangler || rc=1 ;;
     *) warn "unknown tool: $t"; rc=1 ;;
   esac
 done

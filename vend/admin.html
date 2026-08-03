@@ -153,13 +153,14 @@ code{background:#21262d;border:1px solid var(--line);border-radius:4px;padding:1
         <button class="sec" data-tool="codex" data-cmd="codex login --device-auth" title="Device-code flow">Codex</button>
         <button class="sec" data-tool="claude" data-cmd="claude auth login" title="Redirect and paste-code flow">Claude</button>
         <button class="sec" data-tool="gemini" data-cmd="NO_BROWSER=true gemini" title="Redirect and paste-code flow">Gemini</button>
+        <button class="sec" data-tool="wrangler" data-cmd="wrangler login --no-use-keyring" title="Cloudflare OAuth with callback relay">Cloudflare</button>
       </div>
       <div id="termbox"></div>
 
       <details id="relaybox" style="margin-top:14px">
-        <summary style="cursor:pointer;color:var(--mut);font-size:13px">Gemini callback relay · fallback only</summary>
-        <p class="note"><b>Use <code>NO_BROWSER=true</code> first.</b> It redirects to <code>codeassist.google.com/authcode</code> and accepts a pasted code without a localhost callback.</p>
-        <p class="note">If Gemini still redirects to an unreachable <code>http://localhost:&lt;port&gt;/oauth2callback?...</code>, paste the complete browser URL below so the VM can relay it.</p>
+        <summary style="cursor:pointer;color:var(--mut);font-size:13px">OAuth callback relay</summary>
+        <p class="note">Gemini normally uses <code>NO_BROWSER=true</code> and accepts a pasted code without a localhost callback.</p>
+        <p class="note">Wrangler redirects to an unreachable <code>http://localhost:8976/oauth/callback?...</code> during remote login. Paste the complete browser URL below while the terminal is still waiting. This also supports older Gemini localhost callbacks.</p>
         <div class="row">
           <input id="relayurl" placeholder="http://localhost:52341/oauth2callback?code=...&amp;state=..." style="flex:1;min-width:280px">
           <button id="relaygo">Relay callback</button>
@@ -426,7 +427,7 @@ document.addEventListener('click',event=>{
   runCmd(target.dataset.cmd,target.dataset.tool);
 });
 
-// ---- Gemini callback relay ----
+// ---- OAuth callback relay ----
 $('#relaygo').onclick=async()=>{
   const status=$('#relaystat'),button=$('#relaygo');
   button.disabled=true;status.textContent='Relaying…';status.style.color='';
@@ -440,8 +441,7 @@ $('#relaygo').onclick=async()=>{
 };
 $('#relayurl').addEventListener('keydown',event=>{if(event.key==='Enter')$('#relaygo').click()});
 function maybeOpenRelay(credentials){
-  const gemini=credentials.find(c=>c.tool==='gemini');
-  if(gemini?.needs_relay&&['missing','expired'].includes(gemini.state))$('#relaybox').open=true;
+  if(credentials.some(c=>c.needs_relay&&['missing','expired','unknown'].includes(c.state)))$('#relaybox').open=true;
 }
 
 // ---- agent context ----

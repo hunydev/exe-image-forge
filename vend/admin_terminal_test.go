@@ -19,6 +19,7 @@ func TestHostAuthCommandAllowlist(t *testing.T) {
 		{tool: "codex", command: "codex", args: []string{"login", "--device-auth"}},
 		{tool: "claude", command: "claude", args: []string{"auth", "login"}},
 		{tool: "gemini", command: "gemini", env: []string{"NO_BROWSER=true"}},
+		{tool: "wrangler", command: "wrangler", args: []string{"login", "--no-use-keyring"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {

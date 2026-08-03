@@ -57,7 +57,7 @@ test('admin tabs expose fixture status without real credentials', async ({ page 
   await signIn(page, '/admin/');
 
   await expect(page.locator('#app')).toBeVisible();
-  await expect(page.locator('#metriccreds')).toHaveText('4/4');
+  await expect(page.locator('#metriccreds')).toHaveText('5/5');
   await expect(page.locator('#metricvariants')).toHaveText('16/16');
 
   await page.getByRole('tab', { name: 'CLI Logins' }).click();
@@ -84,7 +84,7 @@ test('documentation screenshots @screenshots', async ({ page }, testInfo) => {
   });
 
   await page.goto('/admin/');
-  await expect(page.locator('#metriccreds')).toHaveText('4/4');
+  await expect(page.locator('#metriccreds')).toHaveText('5/5');
   await page.screenshot({
     path: 'docs/images/admin-overview.png',
     fullPage: true,

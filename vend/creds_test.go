@@ -72,6 +72,40 @@ func TestGhGarbage(t *testing.T) {
 	}
 }
 
+func TestWranglerOAuthCredential(t *testing.T) {
+	home := t.TempDir()
+	expiry := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	write(t, home, ".config/.wrangler/config/default.toml", fmt.Sprintf(
+		"oauth_token = \"access\"\nrefresh_token = \"refresh\"\nexpiration_time = %q\n", expiry))
+	c := find(inspectCreds(home), "wrangler")
+	if c.State != "ok" || !c.Refreshable {
+		t.Errorf("state=%q refreshable=%v, want ok and refreshable", c.State, c.Refreshable)
+	}
+	if !c.NeedsRelay {
+		t.Error("Wrangler remote OAuth requires the localhost callback relay")
+	}
+}
+
+func TestWranglerExpiredAccessTokenCanRefresh(t *testing.T) {
+	home := t.TempDir()
+	expiry := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	write(t, home, ".config/.wrangler/config/default.toml", fmt.Sprintf(
+		"oauth_token = \"access\"\nrefresh_token = \"refresh\"\nexpiration_time = %q\n", expiry))
+	c := find(inspectCreds(home), "wrangler")
+	if c.State != "stale" || !c.Refreshable {
+		t.Errorf("state=%q refreshable=%v, want stale and refreshable", c.State, c.Refreshable)
+	}
+}
+
+func TestWranglerKeyringCredentialIsNotPortable(t *testing.T) {
+	home := t.TempDir()
+	write(t, home, ".config/.wrangler/config/default.enc", "encrypted")
+	c := find(inspectCreds(home), "wrangler")
+	if c.State != "unknown" || !strings.Contains(c.Detail, "not portable") {
+		t.Errorf("credential = %+v, want an actionable non-portable warning", c)
+	}
+}
+
 func TestCodexChatGPTFresh(t *testing.T) {
 	home := t.TempDir()
 	body, _ := json.Marshal(map[string]any{
@@ -256,22 +290,23 @@ func TestRelayReachesLoopbackListener(t *testing.T) {
 func TestLoginCommandsAreHeadless(t *testing.T) {
 	creds := inspectCreds(t.TempDir())
 	want := map[string]string{
-		"gh":     "gh auth login --git-protocol https",
-		"codex":  "codex login --device-auth",
-		"claude": "claude auth login",
-		"gemini": "NO_BROWSER=true gemini",
+		"gh":       "gh auth login --git-protocol https",
+		"codex":    "codex login --device-auth",
+		"claude":   "claude auth login",
+		"gemini":   "NO_BROWSER=true gemini",
+		"wrangler": "wrangler login --no-use-keyring",
 	}
 	for _, c := range creds {
 		if got := want[c.Tool]; got != c.LoginCmd {
 			t.Errorf("%s: login_cmd = %q, want %q", c.Tool, c.LoginCmd, got)
 		}
 	}
-	// Every CLI now has a paste-the-code flow, so nothing should need the
-	// localhost callback relay.
+	// Wrangler's remote OAuth flow always returns to localhost:8976. The other
+	// CLIs avoid localhost through device or pasted-code flows.
 	for _, c := range creds {
-		if c.NeedsRelay {
-			t.Errorf("%s: needs_relay is set, but all login commands avoid "+
-				"localhost callbacks now", c.Tool)
+		if c.NeedsRelay != (c.Tool == "wrangler") {
+			t.Errorf("%s: needs_relay = %v, only wrangler should use the relay",
+				c.Tool, c.NeedsRelay)
 		}
 	}
 
@@ -339,14 +374,14 @@ func TestUpdaterCoversEveryTrackedCLI(t *testing.T) {
 		t.Skipf("update script not available: %v", err)
 	}
 	src := string(script)
-	for _, tool := range []string{"codex", "claude", "gemini", "gh"} {
+	for _, tool := range []string{"codex", "claude", "gemini", "gh", "wrangler"} {
 		if !strings.Contains(src, "update_"+tool+"()") {
 			t.Errorf("update-ai-clis has no update_%s(); %s would never be updated", tool, tool)
 		}
 	}
 	// The default tool list must actually run them.
-	if !strings.Contains(src, `TOOLS:-codex claude gemini gh`) {
-		t.Error("default TOOLS list does not cover all four CLIs")
+	if !strings.Contains(src, `TOOLS:-codex claude gemini gh wrangler`) {
+		t.Error("default TOOLS list does not cover all five CLIs")
 	}
 	// Every tool the credential inspector reports on should be updatable.
 	for _, c := range inspectCreds(t.TempDir()) {
@@ -487,7 +522,7 @@ func TestOptionalComponentsAreLastLayers(t *testing.T) {
 		t.Skipf("Dockerfile not readable: %v", err)
 	}
 	df := string(b)
-	base := strings.Index(df, "TOOLS=gh")
+	base := strings.Index(df, `TOOLS="gh wrangler"`)
 	if base < 0 {
 		t.Fatal("could not find the shared base CLI install step")
 	}
@@ -760,6 +795,7 @@ func TestBakeCopiesAnAllowlistNotTheWholeHome(t *testing.T) {
 	for _, want := range []string{
 		".codex/auth.json", ".claude/.credentials.json",
 		".gemini/gemini-credentials.json", ".config/gh/hosts.yml",
+		".config/.wrangler/config/default.toml",
 	} {
 		if !strings.Contains(credAllowlist(t), want) {
 			t.Errorf("allowlist is missing %q", want)
@@ -969,7 +1005,7 @@ func TestBakeVerifiesTheLoginsSurvive(t *testing.T) {
 	if j := strings.Index(bake, "\ncmd_"); j > 0 {
 		bake = bake[:j]
 	}
-	for _, tool := range []string{"gh", "codex", "claude", "gemini"} {
+	for _, tool := range []string{"gh", "codex", "claude", "gemini", "wrangler"} {
 		if !strings.Contains(bake, `"`+tool+`"`) && !strings.Contains(bake, " "+tool+" ") {
 			t.Errorf("bake does not verify %s is logged in afterwards", tool)
 		}

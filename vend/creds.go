@@ -88,6 +88,9 @@ func (c *Cred) setExpiry(t time.Time) {
 
 var ghTokenRe = regexp.MustCompile(`(?m)^\s+oauth_token:\s*(\S+)`)
 var ghUserRe = regexp.MustCompile(`(?m)^\s+user:\s*(\S+)`)
+var wranglerTokenRe = regexp.MustCompile(`(?m)^\s*oauth_token\s*=\s*"([^"]+)"`)
+var wranglerRefreshRe = regexp.MustCompile(`(?m)^\s*refresh_token\s*=\s*"([^"]+)"`)
+var wranglerExpiryRe = regexp.MustCompile(`(?m)^\s*expiration_time\s*=\s*"([^"]+)"`)
 
 func inspectCreds(home string) []Cred {
 	j := func(p ...string) string { return filepath.Join(append([]string{home}, p...)...) }
@@ -112,6 +115,37 @@ func inspectCreds(home string) []Cred {
 		}
 	}
 	out = append(out, gh)
+
+	// --- wrangler ---------------------------------------------------
+	// Wrangler's remote OAuth flow returns to localhost:8976. The admin relay
+	// replays that callback from this VM. --no-use-keyring is intentional: the
+	// plaintext TOML file contains the refresh token and remains portable when
+	// the allowlisted credentials are baked into a generated image.
+	wr := Cred{Tool: "wrangler", Name: "Cloudflare Wrangler",
+		File: ".config/.wrangler/config/default.toml", State: "missing",
+		LoginCmd: "wrangler login --no-use-keyring", NeedsRelay: true}
+	if b, err := os.ReadFile(j(".config", ".wrangler", "config", "default.toml")); err == nil && len(b) > 0 {
+		wr.Refreshable = wranglerRefreshRe.Match(b)
+		wr.Detail = "Cloudflare OAuth"
+		if m := wranglerExpiryRe.FindSubmatch(b); m != nil {
+			if expiry, err := time.Parse(time.RFC3339, string(m[1])); err == nil {
+				wr.setExpiry(expiry)
+			} else {
+				wr.State = "unknown"
+				wr.Detail = "Could not parse token expiry"
+			}
+		} else if wranglerTokenRe.Match(b) {
+			wr.State = "ok"
+		} else {
+			wr.State = "unknown"
+			wr.Detail = "No OAuth token in default.toml"
+		}
+	} else if b, err := os.ReadFile(j(".config", ".wrangler", "config", "default.enc")); err == nil && len(b) > 0 {
+		wr.File = ".config/.wrangler/config/default.enc"
+		wr.State = "unknown"
+		wr.Detail = "Keyring login is not portable; sign in again"
+	}
+	out = append(out, wr)
 
 	// --- codex ------------------------------------------------------
 	// codex: --device-auth avoids the localhost:1455 callback entirely.
@@ -268,7 +302,7 @@ func summarize(creds []Cred) []string {
 }
 
 // toolVersions reads the version manifest baked into an image by the
-// update-ai-clis script. Reading a file beats running four CLIs, each of which
+// update-ai-clis script. Reading a file beats running five CLIs, each of which
 // can take seconds to start.
 func (s *server) toolVersions() map[string]string {
 	if s.demo {

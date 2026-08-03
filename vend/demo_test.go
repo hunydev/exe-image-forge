@@ -51,14 +51,14 @@ func TestDemoFixturesNeedNoDockerOrCredentials(t *testing.T) {
 	if cfg.Hash != hashPassword(demoPassword, cfg.Salt) {
 		t.Fatal("demo password does not match the fixture config")
 	}
-	if got := len(demoCredentials()); got != 4 {
-		t.Fatalf("demo credentials = %d, want 4", got)
+	if got := len(demoCredentials()); got != 5 {
+		t.Fatalf("demo credentials = %d, want 5", got)
 	}
 	if got := len(s.variants()); got != len(variantNames) {
 		t.Fatalf("demo variants = %d, want %d", got, len(variantNames))
 	}
 	if versions := s.toolVersions(); versions["codex"] == "" || versions["claude"] == "" ||
-		versions["gemini"] == "" {
+		versions["gemini"] == "" || versions["wrangler"] == "" {
 		t.Fatalf("demo versions are incomplete: %+v", versions)
 	}
 	if context := s.agentContext("codex-go"); context == "" {
