@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.18
 
-FROM docker.io/library/golang:1.26.5-bookworm AS vend-builder
+FROM docker.io/library/golang:1.27.0-bookworm AS vend-builder
 WORKDIR /src
 COPY vend/go.mod vend/go.sum ./
 RUN go mod download
