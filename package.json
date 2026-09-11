@@ -8,6 +8,6 @@
     "screenshots": "UPDATE_SCREENSHOTS=1 playwright test --project=chromium --grep @screenshots"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1"
+    "@playwright/test": "1.63.0"
   }
 }
