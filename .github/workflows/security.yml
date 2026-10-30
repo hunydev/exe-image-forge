@@ -80,12 +80,12 @@ jobs:
           appliance/first-login.sh
           appliance/motd.sh
           scripts/test-appliance.sh
-      - uses: hadolint/hadolint-action@v3.4.0
+      - uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: image/Dockerfile
           config: .hadolint.yaml
           failure-threshold: warning
-      - uses: hadolint/hadolint-action@v3.4.0
+      - uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: appliance/Dockerfile
           config: .hadolint.yaml
